@@ -1,0 +1,1 @@
+## QUAKE2 Server
