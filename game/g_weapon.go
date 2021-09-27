@@ -28,6 +28,181 @@ package game
 import "quake2srv/shared"
 
 /*
+ * This is an internal support routine
+ * used for bullet/pellet based weapons.
+ */
+func (G *qGame) fire_lead(self *edict_t, start, aimdir []float32, damage, kick,
+	te_impact, hspread, vspread, mod int) {
+	//  trace_t tr;
+	//  vec3_t dir;
+	//  vec3_t forward, right, up;
+	//  vec3_t end;
+	//  float r;
+	//  float u;
+	//  vec3_t water_start;
+	water_start := make([]float32, 3)
+	water := false
+	content_mask := shared.MASK_SHOT | shared.MASK_WATER
+
+	if self == nil {
+		return
+	}
+
+	tr := G.gi.Trace(self.s.Origin[:], nil, nil, start, self, shared.MASK_SHOT)
+
+	if !(tr.Fraction < 1.0) {
+		dir := make([]float32, 3)
+		vectoangles(aimdir, dir)
+		forward := make([]float32, 3)
+		right := make([]float32, 3)
+		up := make([]float32, 3)
+		shared.AngleVectors(dir, forward, right, up)
+
+		r := shared.Crandk() * float32(hspread)
+		u := shared.Crandk() * float32(vspread)
+		end := make([]float32, 3)
+		shared.VectorMA(start, 8192, forward, end)
+		shared.VectorMA(end, r, right, end)
+		shared.VectorMA(end, u, up, end)
+
+		if (G.gi.Pointcontents(start) & shared.MASK_WATER) != 0 {
+			water = true
+			copy(water_start, start)
+			content_mask &^= shared.MASK_WATER
+		}
+
+		tr = G.gi.Trace(start, nil, nil, end, self, content_mask)
+
+		/* see if we hit water */
+		if (tr.Contents & shared.MASK_WATER) != 0 {
+
+			water = true
+			copy(water_start, tr.Endpos[:])
+
+			if shared.VectorCompare(start, tr.Endpos[:]) == 0 {
+				color := shared.SPLASH_UNKNOWN
+				if (tr.Contents & shared.CONTENTS_WATER) != 0 {
+					if tr.Surface.Name == "*brwater" {
+						color = shared.SPLASH_BROWN_WATER
+					} else {
+						color = shared.SPLASH_BLUE_WATER
+					}
+				} else if (tr.Contents & shared.CONTENTS_SLIME) != 0 {
+					color = shared.SPLASH_SLIME
+				} else if (tr.Contents & shared.CONTENTS_LAVA) != 0 {
+					color = shared.SPLASH_LAVA
+				}
+
+				if color != shared.SPLASH_UNKNOWN {
+					G.gi.WriteByte(shared.SvcTempEntity)
+					G.gi.WriteByte(shared.TE_SPLASH)
+					G.gi.WriteByte(8)
+					G.gi.WritePosition(tr.Endpos[:])
+					G.gi.WriteDir(tr.Plane.Normal[:])
+					G.gi.WriteByte(color)
+					G.gi.Multicast(tr.Endpos[:], shared.MULTICAST_PVS)
+				}
+
+				/* change bullet's course when it enters water */
+				shared.VectorSubtract(end, start, dir)
+				vectoangles(dir, dir)
+				shared.AngleVectors(dir, forward, right, up)
+				r = shared.Crandk() * float32(hspread*2)
+				u = shared.Crandk() * float32(vspread*2)
+				shared.VectorMA(water_start, 8192, forward, end)
+				shared.VectorMA(end, r, right, end)
+				shared.VectorMA(end, u, up, end)
+			}
+
+			/* re-trace ignoring water this time */
+			tr = G.gi.Trace(water_start, nil, nil, end, self, shared.MASK_SHOT)
+		}
+	}
+
+	/* send gun puff / flash */
+	if !((tr.Surface != nil) && (tr.Surface.Flags&shared.SURF_SKY) != 0) {
+		if tr.Fraction < 1.0 {
+			if tr.Ent.(*edict_t).takedamage != 0 {
+				G.tDamage(tr.Ent.(*edict_t), self, self, aimdir, tr.Endpos[:], tr.Plane.Normal[:],
+					damage, kick, DAMAGE_BULLET, mod)
+			} else {
+				if tr.Surface.Name[0:3] != "sky" {
+					G.gi.WriteByte(shared.SvcTempEntity)
+					G.gi.WriteByte(te_impact)
+					G.gi.WritePosition(tr.Endpos[:])
+					G.gi.WriteDir(tr.Plane.Normal[:])
+					G.gi.Multicast(tr.Endpos[:], shared.MULTICAST_PVS)
+
+					// 				 if (self->client)
+					// 				 {
+					// 					 PlayerNoise(self, tr.endpos, PNOISE_IMPACT);
+					// 				 }
+				}
+			}
+		}
+	}
+
+	/* if went through water, determine
+	where the end and make a bubble trail */
+	if water {
+		// 	 vec3_t pos;
+
+		// 	 VectorSubtract(tr.endpos, water_start, dir);
+		// 	 VectorNormalize(dir);
+		// 	 VectorMA(tr.endpos, -2, dir, pos);
+
+		// 	 if (gi.pointcontents(pos) & MASK_WATER)
+		// 	 {
+		// 		 VectorCopy(pos, tr.endpos);
+		// 	 }
+		// 	 else
+		// 	 {
+		// 		 tr = gi.trace(pos, NULL, NULL, water_start, tr.ent, MASK_WATER);
+		// 	 }
+
+		// 	 VectorAdd(water_start, tr.endpos, pos);
+		// 	 VectorScale(pos, 0.5, pos);
+
+		// 	 gi.WriteByte(svc_temp_entity);
+		// 	 gi.WriteByte(TE_BUBBLETRAIL);
+		// 	 gi.WritePosition(water_start);
+		// 	 gi.WritePosition(tr.endpos);
+		// 	 gi.multicast(pos, MULTICAST_PVS);
+	}
+}
+
+/*
+ * Fires a single round.  Used for machinegun and
+ * chaingun.  Would be fine for pistols, rifles, etc....
+ */
+func (G *qGame) fire_bullet(self *edict_t, start, aimdir []float32, damage,
+	kick, hspread, vspread, mod int) {
+
+	if self == nil {
+		return
+	}
+
+	G.fire_lead(self, start, aimdir, damage, kick, shared.TE_GUNSHOT, hspread, vspread, mod)
+}
+
+/*
+ * Shoots shotgun pellets. Used
+ * by shotgun and super shotgun.
+ */
+func (G *qGame) fire_shotgun(self *edict_t, start, aimdir []float32, damage,
+	kick, hspread, vspread, count, mod int) {
+
+	if self == nil {
+		return
+	}
+
+	for i := 0; i < count; i++ {
+		G.fire_lead(self, start, aimdir, damage, kick, shared.TE_SHOTGUN,
+			hspread, vspread, mod)
+	}
+}
+
+/*
  * Fires a single blaster bolt.
  * Used by the blaster and hyper blaster.
  */
@@ -70,20 +245,17 @@ func blaster_touch(self, other *edict_t, plane *shared.Cplane_t, surf *shared.Cs
 				[]float32{0, 0, 0}, self.Dmg, 1, DAMAGE_ENERGY, mod)
 		}
 	} else {
-		// 	 gi.WriteByte(svc_temp_entity);
-		// 	 gi.WriteByte(TE_BLASTER);
-		// 	 gi.WritePosition(self->s.origin);
+		G.gi.WriteByte(shared.SvcTempEntity)
+		G.gi.WriteByte(shared.TE_BLASTER)
+		G.gi.WritePosition(self.s.Origin[:])
 
-		// 	 if (!plane)
-		// 	 {
-		// 		 gi.WriteDir(vec3_origin);
-		// 	 }
-		// 	 else
-		// 	 {
-		// 		 gi.WriteDir(plane->normal);
-		// 	 }
+		if plane == nil {
+			G.gi.WriteDir([]float32{0, 0, 0})
+		} else {
+			G.gi.WriteDir(plane.Normal[:])
+		}
 
-		// 	 gi.multicast(self->s.origin, MULTICAST_PVS);
+		G.gi.Multicast(self.s.Origin[:], shared.MULTICAST_PVS)
 	}
 
 	G.gFreeEdict(self)
@@ -144,7 +316,7 @@ func (G *qGame) fire_blaster(self *edict_t, start, dir []float32, damage,
 	tr := G.gi.Trace(self.s.Origin[:], nil, nil, bolt.s.Origin[:], bolt, shared.MASK_SHOT)
 
 	if tr.Fraction < 1.0 {
-		// 		VectorMA(bolt->s.origin, -10, dir, bolt->s.origin);
-		// 		bolt->touch(bolt, tr.ent, NULL, NULL);
+		shared.VectorMA(bolt.s.Origin[:], -10, dir, bolt.s.Origin[:])
+		bolt.touch(bolt, tr.Ent.(*edict_t), nil, nil, G)
 	}
 }

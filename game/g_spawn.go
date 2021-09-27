@@ -48,10 +48,13 @@ var spawns = map[string]func(ent *edict_t, G *qGame) error{
 	"trigger_relay":          spTriggerRelay,
 	"target_speaker":         spTargetSpeaker,
 	"target_explosion":       spTargetExplosion,
+	"target_help":            spTargetHelp,
 	"worldspawn":             spWorldspawn,
 	"light":                  spLight,
-	"point_combat":           spPointCombat,
 	"path_corner":            spPathCorner,
+	"point_combat":           spPointCombat,
+	"misc_explobox":          spMiscExplobox,
+	"misc_deadsoldier":       spMiscDeadsoldier,
 	"misc_teleporter_dest":   spMiscTeleporterDest,
 	"monster_soldier":        spMonsterSoldier,
 }
@@ -208,6 +211,63 @@ func (G *qGame) edParseEdict(data string, index int, ent *edict_t) (int, error) 
 }
 
 /*
+ * Chain together all entities with a matching team field.
+ *
+ * All but the first will have the FL_TEAMSLAVE flag set.
+ * All but the last will have the teamchain field set to the next one
+ */
+func (G *qGame) gFindTeams() {
+
+	c := 0
+	c2 := 0
+
+	for i := 1; i < G.num_edicts; i++ {
+		e := &G.g_edicts[i]
+		if !e.inuse {
+			continue
+		}
+
+		if len(e.Team) == 0 {
+			continue
+		}
+
+		if (e.flags & FL_TEAMSLAVE) != 0 {
+			continue
+		}
+
+		chain := e
+		e.teammaster = e
+		c++
+		c2++
+
+		for j := i + 1; j < G.num_edicts; j++ {
+			e2 := &G.g_edicts[j]
+			if !e2.inuse {
+				continue
+			}
+
+			if len(e2.Team) == 0 {
+				continue
+			}
+
+			if (e2.flags & FL_TEAMSLAVE) != 0 {
+				continue
+			}
+
+			if e.Team == e2.Team {
+				c2++
+				chain.teamchain = e2
+				e2.teammaster = e
+				chain = e2
+				e2.flags |= FL_TEAMSLAVE
+			}
+		}
+	}
+
+	G.gi.Dprintf("%v teams with %v entities.\n", c, c2)
+}
+
+/*
  * Creates a server's entity / program execution context by
  * parsing textual entity definitions out of an ent file.
  */
@@ -241,7 +301,7 @@ func (G *qGame) SpawnEntities(mapname, entities, spawnpoint string) error {
 		//  gi.cvar_forceset("skill", va("%f", skill_level));
 	}
 
-	//  SaveClientData();
+	G.saveClientData()
 
 	//  gi.FreeTags(TAG_LEVEL);
 
@@ -266,7 +326,7 @@ func (G *qGame) SpawnEntities(mapname, entities, spawnpoint string) error {
 	index := 0
 	var err error
 	for index >= 0 && index < len(entities) {
-		// 	 /* parse the opening brace */
+		/* parse the opening brace */
 		var token string
 		token, index = shared.COM_Parse(entities, index)
 		if index < 0 {
@@ -381,7 +441,7 @@ func (G *qGame) SpawnEntities(mapname, entities, spawnpoint string) error {
 
 	G.gi.Dprintf("%v entities inhibited.\n", inhibit)
 
-	//  G_FindTeams();
+	G.gFindTeams()
 
 	//  PlayerTrail_Init();
 	return nil
@@ -555,13 +615,13 @@ func spWorldspawn(ent *edict_t, G *qGame) error {
 		G.level.nextmap = string(G.st.Nextmap)
 	}
 
-	//  /* make some data visible to the server */
-	//  if (ent->message && ent->message[0]) {
-	// 	 gi.configstring(CS_NAME, ent->message);
-	// 	 Q_strlcpy(level.level_name, ent->message, sizeof(level.level_name));
-	//  } else {
-	// 	 Q_strlcpy(level.level_name, level.mapname, sizeof(level.level_name));
-	//  }
+	/* make some data visible to the server */
+	if len(ent.Message) > 0 {
+		G.gi.Configstring(shared.CS_NAME, ent.Message)
+		G.level.level_name = string(ent.Message)
+	} else {
+		G.level.level_name = string(G.level.mapname)
+	}
 
 	if len(G.st.Sky) > 0 {
 		G.gi.Configstring(shared.CS_SKY, G.st.Sky)
@@ -593,11 +653,11 @@ func spWorldspawn(ent *edict_t, G *qGame) error {
 	//  gi.imageindex("help");
 	//  gi.imageindex("field_3");
 
-	//  if (!st.gravity) {
-	// 	 gi.cvar_set("sv_gravity", "800");
-	//  } else {
-	// 	 gi.cvar_set("sv_gravity", st.gravity);
-	//  }
+	// if !G.st.Gravity {
+	G.gi.CvarSet("sv_gravity", "800")
+	// } else {
+	// 	G.gi.CvarSet("sv_gravity", st.gravity)
+	// }
 
 	//  snd_fry = gi.soundindex("player/fry.wav"); /* standing in lava / slime */
 
@@ -637,17 +697,17 @@ func spWorldspawn(ent *edict_t, G *qGame) error {
 	you can add more, max 19 (pete change)these models are only
 	loaded in coop or deathmatch. not singleplayer. */
 	if G.coop.Bool() || G.deathmatch.Bool() {
-		// 	 gi.modelindex("#w_blaster.md2");
-		// 	 gi.modelindex("#w_shotgun.md2");
-		// 	 gi.modelindex("#w_sshotgun.md2");
-		// 	 gi.modelindex("#w_machinegun.md2");
-		// 	 gi.modelindex("#w_chaingun.md2");
-		// 	 gi.modelindex("#a_grenades.md2");
-		// 	 gi.modelindex("#w_glauncher.md2");
-		// 	 gi.modelindex("#w_rlauncher.md2");
-		// 	 gi.modelindex("#w_hyperblaster.md2");
-		// 	 gi.modelindex("#w_railgun.md2");
-		// 	 gi.modelindex("#w_bfg.md2");
+		G.gi.Modelindex("#w_blaster.md2")
+		G.gi.Modelindex("#w_shotgun.md2")
+		G.gi.Modelindex("#w_sshotgun.md2")
+		G.gi.Modelindex("#w_machinegun.md2")
+		G.gi.Modelindex("#w_chaingun.md2")
+		G.gi.Modelindex("#a_grenades.md2")
+		G.gi.Modelindex("#w_glauncher.md2")
+		G.gi.Modelindex("#w_rlauncher.md2")
+		G.gi.Modelindex("#w_hyperblaster.md2")
+		G.gi.Modelindex("#w_railgun.md2")
+		G.gi.Modelindex("#w_bfg.md2")
 	}
 
 	/* ------------------- */

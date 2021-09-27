@@ -33,7 +33,7 @@ import (
 
 func spTargetSpeaker(ent *edict_t, G *qGame) error {
 
-	if ent == nil {
+	if ent == nil || G == nil {
 		return nil
 	}
 
@@ -76,6 +76,52 @@ func spTargetSpeaker(ent *edict_t, G *qGame) error {
 
 /* ========================================================== */
 
+func use_Target_Help(ent, other, activator *edict_t, G *qGame) {
+
+	if ent == nil || G == nil {
+		return
+	}
+
+	if (ent.Spawnflags & 1) != 0 {
+		G.game.helpmessage1 = ent.Message
+	} else {
+		G.game.helpmessage2 = ent.Message
+	}
+
+	G.game.helpchanged++
+}
+
+/*
+ * QUAKED target_help (1 0 1) (-16 -16 -24) (16 16 24) help1
+ * When fired, the "message" key becomes the current personal computer string,
+ * and the message light will be set on all clients status bars.
+ */
+func spTargetHelp(ent *edict_t, G *qGame) error {
+
+	if ent == nil || G == nil {
+		return nil
+	}
+
+	// if (deathmatch->value)
+	// {
+	// 	/* auto-remove for deathmatch */
+	// 	G_FreeEdict(ent);
+	// 	return;
+	// }
+
+	if len(ent.Message) == 0 {
+		G.gi.Dprintf("%s with no message at %s\n", ent.Classname,
+			vtos(ent.s.Origin[:]))
+		G.gFreeEdict(ent)
+		return nil
+	}
+
+	ent.use = use_Target_Help
+	return nil
+}
+
+/* ========================================================== */
+
 /*
  * QUAKED target_explosion (1 0 0) (-8 -8 -8) (8 8 8)
  * Spawns an explosion temporary entity when used.
@@ -90,10 +136,10 @@ func target_explosion_explode(self *edict_t, G *qGame) {
 	}
 
 	println("target_explosion_explode")
-	//  gi.WriteByte(svc_temp_entity);
-	//  gi.WriteByte(TE_EXPLOSION1);
-	//  gi.WritePosition(self->s.origin);
-	//  gi.multicast(self->s.origin, MULTICAST_PHS);
+	G.gi.WriteByte(shared.SvcTempEntity)
+	G.gi.WriteByte(shared.TE_EXPLOSION1)
+	G.gi.WritePosition(self.s.Origin[:])
+	G.gi.Multicast(self.s.Origin[:], shared.MULTICAST_PHS)
 
 	//  T_RadiusDamage(self, self->activator, self->dmg, NULL,
 	// 		 self->dmg + 40, MOD_EXPLOSIVE);

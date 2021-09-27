@@ -47,6 +47,14 @@ func (G *qGameImp) Cvar(var_name, value string, flags int) *shared.CvarT {
 	return G.T.common.Cvar_Get(var_name, value, flags)
 }
 
+func (G *qGameImp) CvarSet(var_name, value string) *shared.CvarT {
+	return G.T.common.Cvar_Set(var_name, value)
+}
+
+func (G *qGameImp) CvarForceSet(var_name, value string) *shared.CvarT {
+	return G.T.common.Cvar_ForceSet(var_name, value)
+}
+
 func (G *qGameImp) Error(format string, a ...interface{}) error {
 	return G.T.common.Com_Error(shared.ERR_DROP, "Game Error: %s", fmt.Sprintf(format, a...))
 }
@@ -189,6 +197,54 @@ func (G *qGameImp) InPHS(p1, p2 []float32) bool {
 
 	return true
 }
+
+func (G *qGameImp) SetAreaPortalState(portalnum int, open bool) {
+	G.T.common.CMSetAreaPortalState(portalnum, open)
+}
+
+func (G *qGameImp) AreasConnected(area1, area2 int) bool {
+	return G.T.common.CMAreasConnected(area1, area2)
+}
+
+func (G *qGameImp) Multicast(origin []float32, to shared.Multicast_t) {
+	G.T.svMulticast(origin, to)
+}
+
+// void (*unicast)(edict_t *ent, qboolean reliable);
+// void (*WriteChar)(int c);
+func (G *qGameImp) WriteByte(c int) {
+	G.T.sv.multicast.WriteByte(c)
+}
+
+func (G *qGameImp) WriteShort(c int) {
+	G.T.sv.multicast.WriteShort(c)
+}
+
+func (G *qGameImp) WriteLong(c int) {
+	G.T.sv.multicast.WriteLong(c)
+}
+
+func (G *qGameImp) WriteFloat(c float32) {
+	G.T.sv.multicast.WriteFloat(c)
+}
+
+func (G *qGameImp) WriteString(c string) {
+	G.T.sv.multicast.WriteString(c)
+}
+
+// void (*WriteShort)(int c);
+// void (*WriteLong)(int c);
+// void (*WriteFloat)(float f);
+// void (*WriteString)(char *s);
+func (G *qGameImp) WritePosition(pos []float32) {
+	G.T.sv.multicast.WritePos(pos)
+}
+
+func (G *qGameImp) WriteDir(pos []float32) {
+	G.T.sv.multicast.WriteDir(pos)
+}
+
+// void (*WriteAngle)(float f);
 
 /*
  * Called when either the entire server is being killed, or

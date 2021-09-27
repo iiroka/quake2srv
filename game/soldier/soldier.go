@@ -26,6 +26,7 @@
 package soldier
 
 const (
+	FRAME_attak101 = 0
 	FRAME_attak102 = 1
 	FRAME_attak103 = 2
 	FRAME_attak104 = 3

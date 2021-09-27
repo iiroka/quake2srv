@@ -229,15 +229,12 @@ func (G *qGame) gUseTargets(ent, activator *edict_t) {
 				break
 			}
 
-			// 	 while ((t = G_Find(t, FOFS(targetname), ent->target)))
-			// 	 {
-			// 		 /* doors fire area portals in a specific way */
-			// 		 if (!Q_stricmp(t->classname, "func_areaportal") &&
-			// 			 (!Q_stricmp(ent->classname, "func_door") ||
-			// 			  !Q_stricmp(ent->classname, "func_door_rotating")))
-			// 		 {
-			// 			 continue;
-			// 		 }
+			/* doors fire area portals in a specific way */
+			if (t.Classname == "func_areaportal") &&
+				(ent.Classname == "func_door" ||
+					ent.Classname == "func_door_rotating") {
+				continue
+			}
 
 			if t == ent {
 				G.gi.Dprintf("WARNING: Entity used itself.\n")

@@ -138,8 +138,8 @@ type Game_import_t interface {
 	Pointcontents(point []float32) int
 	InPVS(p1, p2 []float32) bool
 	InPHS(p1, p2 []float32) bool
-	// void (*SetAreaPortalState)(int portalnum, qboolean open);
-	// qboolean (*AreasConnected)(int area1, int area2);
+	SetAreaPortalState(portalnum int, open bool)
+	AreasConnected(area1, area2 int) bool
 
 	/* an entity will never be sent to a client or used for collision
 	if it is not passed to linkentity. If the size, position, or
@@ -150,16 +150,16 @@ type Game_import_t interface {
 	Pmove(pmove *Pmove_t) /* player movement code common with client prediction */
 
 	// /* network messaging */
-	// void (*multicast)(vec3_t origin, multicast_t to);
+	Multicast(origin []float32, to Multicast_t)
 	// void (*unicast)(edict_t *ent, qboolean reliable);
 	// void (*WriteChar)(int c);
-	// void (*WriteByte)(int c);
-	// void (*WriteShort)(int c);
-	// void (*WriteLong)(int c);
-	// void (*WriteFloat)(float f);
-	// void (*WriteString)(char *s);
-	// void (*WritePosition)(vec3_t pos); /* some fractional bits */
-	// void (*WriteDir)(vec3_t pos); /* single byte encoded, very coarse */
+	WriteByte(c int)
+	WriteShort(c int)
+	WriteLong(c int)
+	WriteFloat(c float32)
+	WriteString(c string)
+	WritePosition(pos []float32) /* some fractional bits */
+	WriteDir(pos []float32)      /* single byte encoded, very coarse */
 	// void (*WriteAngle)(float f);
 
 	// /* managed memory allocation */
@@ -169,8 +169,8 @@ type Game_import_t interface {
 
 	/* console variable interaction */
 	Cvar(var_name, value string, flags int) *CvarT
-	// cvar_t *(*cvar_set)(char *var_name, char *value);
-	// cvar_t *(*cvar_forceset)(char *var_name, char *value);
+	CvarSet(var_name, value string) *CvarT
+	CvarForceSet(var_name, value string) *CvarT
 
 	// /* ClientCommand and ServerCommand parameter access */
 	// int (*argc)(void);

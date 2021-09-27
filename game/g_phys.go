@@ -29,6 +29,12 @@ import (
 	"quake2srv/shared"
 )
 
+const STOP_EPSILON = 0.1
+const MAX_CLIP_PLANES = 5
+const STOPSPEED = 100
+const FRICTION = 6
+const WATERFRICTION = 1
+
 /*
  * pushmove objects do not obey gravity, and do not interact
  * with each other or trigger fields, but block normal movement
@@ -130,6 +136,285 @@ func (G *qGame) svImpact(e1 *edict_t, trace *shared.Trace_t) {
 
 	if e2.touch != nil && (e2.solid != shared.SOLID_NOT) {
 		e2.touch(e2, e1, nil, nil, G)
+	}
+}
+
+/*
+ * Slide off of the impacting object
+ * returns the blocked flags (1 = floor,
+ * 2 = step / wall)
+ */
+func (G *qGame) clipVelocity(in, normal, out []float32, overbounce float32) int {
+
+	blocked := 0
+
+	if normal[2] > 0 {
+		blocked |= 1 /* floor */
+	}
+
+	if normal[2] == 0 {
+		blocked |= 2 /* step */
+	}
+
+	backoff := shared.DotProduct(in, normal) * overbounce
+
+	for i := 0; i < 3; i++ {
+		change := normal[i] * backoff
+		out[i] = in[i] - change
+
+		if (out[i] > -STOP_EPSILON) && (out[i] < STOP_EPSILON) {
+			out[i] = 0
+		}
+	}
+
+	return blocked
+}
+
+/*
+ * The basic solid body movement clip
+ * that slides along multiple planes
+ * Returns the clipflags if the velocity
+ * was modified (hit something solid)
+ *
+ * 1 = floor
+ * 2 = wall / step
+ * 4 = dead stop
+ */
+func (G *qGame) svFlyMove(ent *edict_t, time float32, mask int) int {
+
+	if ent == nil {
+		return 0
+	}
+
+	numbumps := 4
+
+	blocked := 0
+	original_velocity := make([]float32, 3)
+	primal_velocity := make([]float32, 3)
+	copy(original_velocity, ent.velocity[:])
+	copy(primal_velocity, ent.velocity[:])
+	numplanes := 0
+
+	time_left := time
+
+	ent.groundentity = nil
+
+	planes := make([][]float32, MAX_CLIP_PLANES)
+
+	for bumpcount := 0; bumpcount < numbumps; bumpcount++ {
+		end := make([]float32, 3)
+		for i := 0; i < 3; i++ {
+			end[i] = ent.s.Origin[i] + time_left*ent.velocity[i]
+		}
+
+		trace := G.gi.Trace(ent.s.Origin[:], ent.mins[:], ent.maxs[:], end, ent, mask)
+
+		if trace.Allsolid {
+			/* entity is trapped in another solid */
+			copy(ent.velocity[:], []float32{0, 0, 0})
+			return 3
+		}
+
+		if trace.Fraction > 0 {
+			/* actually covered some distance */
+			copy(ent.s.Origin[:], trace.Endpos[:])
+			copy(original_velocity, ent.velocity[:])
+			numplanes = 0
+		}
+
+		if trace.Fraction == 1 {
+			break /* moved the entire distance */
+		}
+
+		hit := trace.Ent.(*edict_t)
+
+		if trace.Plane.Normal[2] > 0.7 {
+			blocked |= 1 /* floor */
+
+			if hit.solid == shared.SOLID_BSP {
+				ent.groundentity = hit
+				ent.groundentity_linkcount = hit.linkcount
+			}
+		}
+
+		if trace.Plane.Normal[2] == 0 {
+			blocked |= 2 /* step */
+		}
+
+		/* run the impact function */
+		G.svImpact(ent, &trace)
+
+		if !ent.inuse {
+			break /* removed by the impact function */
+		}
+
+		time_left -= time_left * trace.Fraction
+
+		/* cliped to another plane */
+		if numplanes >= MAX_CLIP_PLANES {
+			/* this shouldn't really happen */
+			copy(ent.velocity[:], []float32{0, 0, 0})
+			return 3
+		}
+
+		planes[numplanes] = make([]float32, 3)
+		copy(planes[numplanes], trace.Plane.Normal[:])
+		numplanes++
+
+		/* modify original_velocity so it
+		parallels all of the clip planes */
+		i := 0
+		new_velocity := make([]float32, 3)
+		for i = 0; i < numplanes; i++ {
+			G.clipVelocity(original_velocity, planes[i], new_velocity, 1)
+
+			j := 0
+			for j = 0; j < numplanes; j++ {
+				if (j != i) && shared.VectorCompare(planes[i], planes[j]) == 0 {
+					if shared.DotProduct(new_velocity, planes[j]) < 0 {
+						break /* not ok */
+					}
+				}
+			}
+
+			if j == numplanes {
+				break
+			}
+		}
+
+		if i != numplanes {
+			/* go along this plane */
+			copy(ent.velocity[:], new_velocity)
+		} else {
+			/* go along the crease */
+			if numplanes != 2 {
+				copy(ent.velocity[:], []float32{0, 0, 0})
+				return 7
+			}
+
+			dir := make([]float32, 3)
+			shared.CrossProduct(planes[0], planes[1], dir)
+			d := shared.DotProduct(dir, ent.velocity[:])
+			shared.VectorScale(dir, d, ent.velocity[:])
+		}
+
+		/* if original velocity is against the original
+		velocity, stop dead to avoid tiny occilations
+		in sloping corners */
+		if shared.DotProduct(ent.velocity[:], primal_velocity) <= 0 {
+			copy(ent.velocity[:], []float32{0, 0, 0})
+			return blocked
+		}
+	}
+
+	return blocked
+}
+
+func (G *qGame) svAddGravity(ent *edict_t) {
+	if ent == nil {
+		return
+	}
+
+	ent.velocity[2] -= ent.gravity * G.sv_gravity.Float() * FRAMETIME
+}
+
+/*
+ * Returns the actual bounding box of a bmodel.
+ * This is a big improvement over what q2 normally
+ * does with rotating bmodels - q2 sets absmin,
+ * absmax to a cube that will completely contain
+ * the bmodel at *any* rotation on *any* axis, whether
+ * the bmodel can actually rotate to that angle or not.
+ * This leads to a lot of false block tests in SV_Push
+ * if another bmodel is in the vicinity.
+ */
+func RealBoundingBox(ent *edict_t, mins, maxs []float32) {
+	//  vec3_t forward, left, up, f1, l1, u1;
+	//  vec3_t p[8];
+	//  int i, j, k, j2, k4;
+	p := make([][]float32, 8)
+	for i := 0; i < 8; i++ {
+		p[i] = make([]float32, 3)
+	}
+
+	for k := 0; k < 2; k++ {
+		k4 := k * 4
+
+		if k != 0 {
+			p[k4][2] = ent.maxs[2]
+		} else {
+			p[k4][2] = ent.mins[2]
+		}
+
+		p[k4+1][2] = p[k4][2]
+		p[k4+2][2] = p[k4][2]
+		p[k4+3][2] = p[k4][2]
+
+		for j := 0; j < 2; j++ {
+			j2 := j * 2
+
+			if j != 0 {
+				p[j2+k4][1] = ent.maxs[1]
+			} else {
+				p[j2+k4][1] = ent.mins[1]
+			}
+
+			p[j2+k4+1][1] = p[j2+k4][1]
+
+			for i := 0; i < 2; i++ {
+				if i != 0 {
+					p[i+j2+k4][0] = ent.maxs[0]
+				} else {
+					p[i+j2+k4][0] = ent.mins[0]
+				}
+			}
+		}
+	}
+
+	forward := make([]float32, 3)
+	left := make([]float32, 3)
+	up := make([]float32, 3)
+	shared.AngleVectors(ent.s.Angles[:], forward, left, up)
+
+	f1 := make([]float32, 3)
+	l1 := make([]float32, 3)
+	u1 := make([]float32, 3)
+	for i := 0; i < 8; i++ {
+		shared.VectorScale(forward, p[i][0], f1)
+		shared.VectorScale(left, -p[i][1], l1)
+		shared.VectorScale(up, p[i][2], u1)
+		shared.VectorAdd(ent.s.Origin[:], f1, p[i])
+		shared.VectorAdd(p[i], l1, p[i])
+		shared.VectorAdd(p[i], u1, p[i])
+	}
+
+	copy(mins, p[0])
+	copy(maxs, p[0])
+
+	for i := 1; i < 8; i++ {
+		if mins[0] > p[i][0] {
+			mins[0] = p[i][0]
+		}
+
+		if mins[1] > p[i][1] {
+			mins[1] = p[i][1]
+		}
+
+		if mins[2] > p[i][2] {
+			mins[2] = p[i][2]
+		}
+
+		if maxs[0] < p[i][0] {
+			maxs[0] = p[i][0]
+		}
+
+		if maxs[1] < p[i][1] {
+			maxs[1] = p[i][1]
+		}
+
+		if maxs[2] < p[i][2] {
+			maxs[2] = p[i][2]
+		}
 	}
 }
 
@@ -266,7 +551,9 @@ func (G *qGame) svPush(pusher *edict_t, move, amove []float32) bool {
 
 	/* Create a real bounding box for
 	rotating brush models. */
-	//  RealBoundingBox(pusher,realmins,realmaxs);
+	realmins := make([]float32, 3)
+	realmaxs := make([]float32, 3)
+	RealBoundingBox(pusher, realmins, realmaxs)
 
 	/* see if any solid entities
 	are inside the final position */
@@ -293,14 +580,14 @@ func (G *qGame) svPush(pusher *edict_t, move, amove []float32) bool {
 		it will definitely be moved */
 		if check.groundentity != pusher {
 			/* see if the ent needs to be tested */
-			// if (check.absmin[0] >= realmaxs[0]) ||
-			// 	(check.absmin[1] >= realmaxs[1]) ||
-			// 	(check.absmin[2] >= realmaxs[2]) ||
-			// 	(check.absmax[0] <= realmins[0]) ||
-			// 	(check.absmax[1] <= realmins[1]) ||
-			// 	(check.absmax[2] <= realmins[2]) {
-			// 	continue
-			// }
+			if (check.absmin[0] >= realmaxs[0]) ||
+				(check.absmin[1] >= realmaxs[1]) ||
+				(check.absmin[2] >= realmaxs[2]) ||
+				(check.absmax[0] <= realmins[0]) ||
+				(check.absmax[1] <= realmins[1]) ||
+				(check.absmax[2] <= realmins[2]) {
+				continue
+			}
 
 			// 		 /* see if the ent's bbox is inside
 			// 			the pusher's final position */
@@ -521,7 +808,7 @@ func (G *qGame) svPhysics_Toss(ent *edict_t) {
 	/* add gravity */
 	if (ent.movetype != MOVETYPE_FLY) &&
 		(ent.movetype != MOVETYPE_FLYMISSILE) {
-		// 	 SV_AddGravity(ent);
+		G.svAddGravity(ent)
 	}
 
 	/* move angles */
@@ -537,25 +824,22 @@ func (G *qGame) svPhysics_Toss(ent *edict_t) {
 	}
 
 	if trace.Fraction < 1 {
-		// 	 if (ent.movetype == MOVETYPE_BOUNCE) {
-		// 		 backoff = 1.5;
-		// 	 } else {
-		// 		 backoff = 1;
-		// 	 }
+		var backoff float32 = 1.0
+		if ent.movetype == MOVETYPE_BOUNCE {
+			backoff = 1.5
+		}
 
-		// 	 ClipVelocity(ent->velocity, trace.plane.normal, ent->velocity, backoff);
+		G.clipVelocity(ent.velocity[:], trace.Plane.Normal[:], ent.velocity[:], backoff)
 
-		// 	 /* stop if on ground */
-		// 	 if (trace.plane.normal[2] > 0.7)
-		// 	 {
-		// 		 if ((ent->velocity[2] < 60) || (ent->movetype != MOVETYPE_BOUNCE))
-		// 		 {
-		// 			 ent->groundentity = trace.ent;
-		// 			 ent->groundentity_linkcount = trace.ent->linkcount;
-		// 			 VectorCopy(vec3_origin, ent->velocity);
-		// 			 VectorCopy(vec3_origin, ent->avelocity);
-		// 		 }
-		// 	 }
+		/* stop if on ground */
+		if trace.Plane.Normal[2] > 0.7 {
+			if (ent.velocity[2] < 60) || (ent.movetype != MOVETYPE_BOUNCE) {
+				ent.groundentity = trace.Ent.(*edict_t)
+				ent.groundentity_linkcount = ent.groundentity.linkcount
+				copy(ent.velocity[:], []float32{0, 0, 0})
+				copy(ent.avelocity[:], []float32{0, 0, 0})
+			}
+		}
 	}
 
 	/* check for water transition */
@@ -577,12 +861,11 @@ func (G *qGame) svPhysics_Toss(ent *edict_t) {
 		// 			 gi.soundindex("misc/h2ohit1.wav"), 1, 1, 0);
 	}
 
-	//  /* move teamslaves */
-	//  for (slave = ent->teamchain; slave; slave = slave->teamchain)
-	//  {
-	// 	 VectorCopy(ent->s.origin, slave->s.origin);
-	// 	 gi.linkentity(slave);
-	//  }
+	/* move teamslaves */
+	for slave := ent.teamchain; slave != nil; slave = slave.teamchain {
+		copy(slave.s.Origin[:], ent.s.Origin[:])
+		G.gi.Linkentity(slave)
+	}
 }
 
 func (G *qGame) svPhysics_Step(ent *edict_t) {
@@ -602,7 +885,7 @@ func (G *qGame) svPhysics_Step(ent *edict_t) {
 
 	/* airborn monsters should always check for ground */
 	if ent.groundentity == nil {
-		// 		M_CheckGround(ent);
+		G.mCheckGround(ent)
 	}
 
 	groundentity := ent.groundentity
@@ -620,20 +903,21 @@ func (G *qGame) svPhysics_Step(ent *edict_t) {
 	   swimming monsters who are in the water */
 	if !wasonground {
 		if (ent.flags & FL_FLY) == 0 {
-			// 			if (!((ent.flags & FL_SWIM) && (ent.waterlevel > 2))) {
-			// 				if (ent.velocity[2] < sv_gravity.value * -0.1) {
-			// 					hitsound = true;
-			// 				}
+			if !((ent.flags&FL_SWIM) != 0 && (ent.waterlevel > 2)) {
+				// if ent.velocity[2] < G.sv_gravity.Float()*-0.1 {
+				// 	hitsound = true
+				// }
 
-			// 				if (ent.waterlevel == 0) {
-			// 					SV_AddGravity(ent);
-			// 				}
-			// 			}
+				if ent.waterlevel == 0 {
+					G.svAddGravity(ent)
+				}
+			}
 		}
 	}
 
 	/* friction for flying monsters that have been given vertical velocity */
 	if (ent.flags&FL_FLY) != 0 && (ent.velocity[2] != 0) {
+		println("FLYING")
 		// 		speed = fabs(ent->velocity[2]);
 		// 		control = speed < STOPSPEED ? STOPSPEED : speed;
 		// 		friction = FRICTION / 3;
@@ -649,6 +933,7 @@ func (G *qGame) svPhysics_Step(ent *edict_t) {
 
 	/* friction for flying monsters that have been given vertical velocity */
 	if (ent.flags&FL_SWIM) != 0 && (ent.velocity[2] != 0) {
+		println("SWIMMING")
 		// 		speed = fabs(ent->velocity[2]);
 		// 		control = speed < STOPSPEED ? STOPSPEED : speed;
 		// 		newspeed = speed - (FRAMETIME * control * WATERFRICTION * ent->waterlevel);
@@ -666,6 +951,7 @@ func (G *qGame) svPhysics_Step(ent *edict_t) {
 		/* apply friction: let dead monsters who
 		   aren't completely onground slide */
 		if (wasonground) || (ent.flags&(FL_SWIM|FL_FLY)) != 0 {
+			println("WASONGROUND")
 			// 			if (!((ent->health <= 0.0) && !M_CheckBottom(ent)))
 			// 			{
 			// 				vel = ent->velocity;
@@ -689,20 +975,19 @@ func (G *qGame) svPhysics_Step(ent *edict_t) {
 			// 			}
 		}
 
-		// 		if (ent.svflags & SVF_MONSTER) != 0 {
-		// 			mask = MASK_MONSTERSOLID;
-		// 		} else {
-		// 			mask = MASK_SOLID;
-		// 		}
+		mask := shared.MASK_SOLID
+		if (ent.svflags & shared.SVF_MONSTER) != 0 {
+			mask = shared.MASK_MONSTERSOLID
+		}
 
 		// 		VectorCopy(ent->s.origin, oldorig);
-		// 		SV_FlyMove(ent, FRAMETIME, mask);
+		G.svFlyMove(ent, FRAMETIME, mask)
 
-		// 		/* Evil hack to work around dead parasites (and maybe other monster)
-		// 		   falling through the worldmodel into the void. We copy the current
-		// 		   origin (see above) and after the SV_FlyMove() was performend we
-		// 		   checl if we're stuck in the world model. If yes we're undoing the
-		// 		   move. */
+		/* Evil hack to work around dead parasites (and maybe other monster)
+		   falling through the worldmodel into the void. We copy the current
+		   origin (see above) and after the SV_FlyMove() was performend we
+		   checl if we're stuck in the world model. If yes we're undoing the
+		   move. */
 		// 		if (!VectorCompare(ent->s.origin, oldorig)) {
 		// 			tr = gi.trace(ent->s.origin, ent->mins, ent->maxs, ent->s.origin, ent, mask);
 
@@ -738,9 +1023,9 @@ func (G *qGame) runEntity(ent *edict_t) error {
 		return nil
 	}
 
-	// if (ent.prethink != nil) {
-	// 	ent.prethink(ent, G);
-	// }
+	if ent.prethink != nil {
+		ent.prethink(ent, G)
+	}
 
 	switch ent.movetype {
 	case MOVETYPE_PUSH,

@@ -1335,6 +1335,7 @@ type QCommon interface {
 	CMClusterPVS(cluster int) []byte
 	CMClusterPHS(cluster int) []byte
 	CMBoxLeafnums(mins, maxs []float32, list []int, listsize int, topnode *int) int
+	CMSetAreaPortalState(portalnum int, open bool)
 	CMAreasConnected(area1, area2 int) bool
 	CMHeadnodeVisible(nodenum int, visbits []byte) bool
 	CMBoxTrace(start, end, mins, maxs []float32, headnode, brushmask int) Trace_t

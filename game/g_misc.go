@@ -139,14 +139,13 @@ func point_combat_touch(self, other *edict_t, plane *shared.Cplane_t,
 		other.movetarget = G.gPickTarget(other.Target)
 		other.goalentity = other.movetarget
 
-		// 		 if (!other->goalentity)
-		// 		 {
-		// 			 gi.dprintf("%s at %s target %s does not exist\n",
-		// 					 self->classname,
-		// 					 vtos(self->s.origin),
-		// 					 self->target);
-		// 			 other->movetarget = self;
-		// 		 }
+		if other.goalentity == nil {
+			G.gi.Dprintf("%s at %s target %s does not exist\n",
+				self.Classname,
+				vtos(self.s.Origin[:]),
+				self.Target)
+			other.movetarget = self
+		}
 
 		self.Target = ""
 	} else if (self.Spawnflags&1) != 0 && (other.flags&(FL_SWIM|FL_FLY)) == 0 {
@@ -224,6 +223,124 @@ func spLight(self *edict_t, G *qGame) error {
 			return G.gi.Configstring(shared.CS_LIGHTS+self.Style, "m")
 		}
 	}
+	return nil
+}
+
+func spMiscExplobox(self *edict_t, G *qGame) error {
+	if self == nil || G == nil {
+		return nil
+	}
+
+	if G.deathmatch.Bool() {
+		/* auto-remove for deathmatch */
+		G.gFreeEdict(self)
+		return nil
+	}
+
+	G.gi.Modelindex("models/objects/debris1/tris.md2")
+	G.gi.Modelindex("models/objects/debris2/tris.md2")
+	G.gi.Modelindex("models/objects/debris3/tris.md2")
+
+	self.solid = shared.SOLID_BBOX
+	self.movetype = MOVETYPE_STEP
+
+	self.Model = "models/objects/barrels/tris.md2"
+	self.s.Modelindex = G.gi.Modelindex(self.Model)
+	copy(self.mins[:], []float32{-16, -16, 0})
+	copy(self.maxs[:], []float32{16, 16, 40})
+
+	if self.Mass == 0 {
+		self.Mass = 400
+	}
+
+	if self.Health == 0 {
+		self.Health = 10
+	}
+
+	if self.Dmg == 0 {
+		self.Dmg = 150
+	}
+
+	// self.die = barrel_delay
+	self.takedamage = DAMAGE_YES
+	self.monsterinfo.aiflags = AI_NOSTEP
+
+	// self.touch = barrel_touch
+
+	self.think = droptofloor
+	self.nextthink = G.level.time + 2*FRAMETIME
+
+	G.gi.Linkentity(self)
+	return nil
+}
+
+/* ===================================================== */
+
+/*
+ * QUAKED misc_deadsoldier (1 .5 0) (-16 -16 0) (16 16 16) ON_BACK ON_STOMACH BACK_DECAP FETAL_POS SIT_DECAP IMPALED
+ * This is the dead player model. Comes in 6 exciting different poses!
+ */
+func misc_deadsoldier_die(self, inflictor, attacker *edict_t, damage int, point []float32, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	if self.Health > -80 {
+		return
+	}
+
+	//  gi.sound(self, CHAN_BODY, gi.soundindex("misc/udeath.wav"), 1, ATTN_NORM, 0);
+
+	//  for (n = 0; n < 4; n++) {
+	// 	 ThrowGib(self,
+	// 			 "models/objects/gibs/sm_meat/tris.md2",
+	// 			 damage,
+	// 			 GIB_ORGANIC);
+	//  }
+
+	//  ThrowHead(self, "models/objects/gibs/head2/tris.md2", damage, GIB_ORGANIC);
+}
+
+func spMiscDeadsoldier(ent *edict_t, G *qGame) error {
+	if ent == nil || G == nil {
+		return nil
+	}
+
+	if G.deathmatch.Bool() {
+		/* auto-remove for deathmatch */
+		G.gFreeEdict(ent)
+		return nil
+	}
+
+	ent.movetype = MOVETYPE_NONE
+	ent.solid = shared.SOLID_BBOX
+	ent.s.Modelindex = G.gi.Modelindex("models/deadbods/dude/tris.md2")
+
+	/* Defaults to frame 0 */
+	if (ent.Spawnflags & 2) != 0 {
+		ent.s.Frame = 1
+	} else if (ent.Spawnflags & 4) != 0 {
+		ent.s.Frame = 2
+	} else if (ent.Spawnflags & 8) != 0 {
+		ent.s.Frame = 3
+	} else if (ent.Spawnflags & 16) != 0 {
+		ent.s.Frame = 4
+	} else if (ent.Spawnflags & 32) != 0 {
+		ent.s.Frame = 5
+	} else {
+		ent.s.Frame = 0
+	}
+
+	copy(ent.mins[:], []float32{-16, -16, 0})
+	copy(ent.maxs[:], []float32{16, 16, 16})
+	ent.deadflag = DEAD_DEAD
+	ent.takedamage = DAMAGE_YES
+	ent.svflags |= shared.SVF_MONSTER | shared.SVF_DEADMONSTER
+	ent.die = misc_deadsoldier_die
+	ent.monsterinfo.aiflags |= AI_GOOD_GUY
+
+	G.gi.Linkentity(ent)
 	return nil
 }
 

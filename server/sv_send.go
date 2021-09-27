@@ -48,13 +48,13 @@ func (T *qServer) svSendClientDatagram(client *client_t) bool {
 	   for this client out to the message
 	   it is necessary for this to be after the WriteEntities
 	   so that entity references will be current */
-	// if (client->datagram.overflowed) {
-	// 	Com_Printf("WARNING: datagram overflowed for %s\n", client->name);
-	// } else {
-	// 	SZ_Write(&msg, client->datagram.data, client->datagram.cursize);
-	// }
+	if client.datagram.Overflowed {
+		log.Printf("WARNING: datagram overflowed for %s\n", client.name)
+	} else {
+		msg.Write(client.datagram.Data())
+	}
 
-	// SZ_Clear(&client->datagram);
+	client.datagram.Clear()
 
 	if msg.Overflowed {
 		/* must have room left for the packet header */
@@ -66,7 +66,7 @@ func (T *qServer) svSendClientDatagram(client *client_t) bool {
 	client.netchan.Transmit(msg.Data())
 
 	/* record the size for rate estimation */
-	// client->message_size[sv.framenum % RATE_MESSAGES] = msg.cursize;
+	// client.message_size[sv.framenum%RATE_MESSAGES] = msg.cursize
 
 	return true
 }
@@ -105,43 +105,42 @@ func (T *qServer) svMulticast(origin []float32, to shared.Multicast_t) {
 
 	reliable := false
 
-	//  if ((to != shared.MULTICAST_ALL_R) && (to != shared.MULTICAST_ALL)) {
-	// 	 leafnum = CM_PointLeafnum(origin);
-	// 	 area1 = CM_LeafArea(leafnum);
-	//  }
-	//  else
-	//  {
-	// 	 area1 = 0;
-	//  }
+	area1 := 0
+	if (to != shared.MULTICAST_ALL_R) && (to != shared.MULTICAST_ALL) {
+		leafnum := T.common.CMPointLeafnum(origin)
+		area1 = T.common.CMLeafArea(leafnum)
+	}
 
 	/* if doing a serverrecord, store everything */
 	//  if (svs.demofile) {
 	// 	 SZ_Write(&svs.demo_multicast, sv.multicast.data, sv.multicast.cursize);
 	//  }
 
+	var mask []byte = nil
 	switch to {
 	case shared.MULTICAST_ALL_R:
 		reliable = true /* intentional fallthrough */
 		fallthrough
 	case shared.MULTICAST_ALL:
-		//  mask = NULL;
 		break
 
-		//  case MULTICAST_PHS_R:
-		// 	 reliable = true; /* intentional fallthrough */
-		//  case MULTICAST_PHS:
-		// 	 leafnum = CM_PointLeafnum(origin);
-		// 	 cluster = CM_LeafCluster(leafnum);
-		// 	 mask = CM_ClusterPHS(cluster);
-		// 	 break;
+	case shared.MULTICAST_PHS_R:
+		reliable = true /* intentional fallthrough */
+		fallthrough
+	case shared.MULTICAST_PHS:
+		leafnum := T.common.CMPointLeafnum(origin)
+		cluster := T.common.CMLeafCluster(leafnum)
+		mask = T.common.CMClusterPHS(cluster)
+		break
 
-		//  case MULTICAST_PVS_R:
-		// 	 reliable = true; /* intentional fallthrough */
-		//  case MULTICAST_PVS:
-		// 	 leafnum = CM_PointLeafnum(origin);
-		// 	 cluster = CM_LeafCluster(leafnum);
-		// 	 mask = CM_ClusterPVS(cluster);
-		// 	 break;
+	case shared.MULTICAST_PVS_R:
+		reliable = true /* intentional fallthrough */
+		fallthrough
+	case shared.MULTICAST_PVS:
+		leafnum := T.common.CMPointLeafnum(origin)
+		cluster := T.common.CMLeafCluster(leafnum)
+		mask = T.common.CMClusterPVS(cluster)
+		break
 
 	default:
 		// mask = NULL
@@ -158,26 +157,24 @@ func (T *qServer) svMulticast(origin []float32, to shared.Multicast_t) {
 			continue
 		}
 
-		//  if (mask) {
-		// 	 leafnum = CM_PointLeafnum(client->edict->s.origin);
-		// 	 cluster = CM_LeafCluster(leafnum);
-		// 	 area2 = CM_LeafArea(leafnum);
+		if mask != nil {
+			leafnum := T.common.CMPointLeafnum(client.edict.S().Origin[:])
+			cluster := T.common.CMLeafCluster(leafnum)
+			area2 := T.common.CMLeafArea(leafnum)
 
-		// 	 if (!CM_AreasConnected(area1, area2))
-		// 	 {
-		// 		 continue;
-		// 	 }
+			if !T.common.CMAreasConnected(area1, area2) {
+				continue
+			}
 
-		// 	 if (!(mask[cluster >> 3] & (1 << (cluster & 7))))
-		// 	 {
-		// 		 continue;
-		// 	 }
-		//  }
+			if (mask[cluster>>3] & (1 << (cluster & 7))) == 0 {
+				continue
+			}
+		}
 
 		if reliable {
 			T.svs.clients[j].netchan.Message.Write(T.sv.multicast.Data())
 		} else {
-			// T.svs.clients[j].datagram.Write(T.sv.multicast.Data())
+			T.svs.clients[j].datagram.Write(T.sv.multicast.Data())
 		}
 	}
 
@@ -228,8 +225,7 @@ func (T *qServer) svSendClientMessages() {
 		   client */
 		if c.netchan.Message.Overflowed {
 			T.svs.clients[i].netchan.Message.Clear()
-			// 		SZ_Clear(&c->netchan.message);
-			// 		SZ_Clear(&c->datagram);
+			T.svs.clients[i].datagram.Clear()
 			// SV_BroadcastPrintf(PRINT_HIGH, "%s overflowed\n", c->name);
 			// 		SV_DropClient(c);
 		}

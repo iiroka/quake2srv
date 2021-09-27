@@ -177,6 +177,8 @@ const (
 	U_SKIN16    = (1 << 25)
 	U_SOUND     = (1 << 26)
 	U_SOLID     = (1 << 27)
+
+	NUMVERTEXNORMALS = 162
 )
 
 func ReadInt32(b []byte) int32 {

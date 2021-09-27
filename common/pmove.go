@@ -27,6 +27,7 @@
 package common
 
 import (
+	"fmt"
 	"math"
 	"quake2srv/shared"
 )
@@ -314,32 +315,32 @@ func PM_AddCurrents(pm *shared.Pmove_t, pml *pml_t, wishvel []float32) {
 	// float s;
 
 	/* account for ladders */
-	// if (pml.ladder && (fabs(pml.velocity[2]) <= 200)) {
-	// 	if ((pm.viewangles[PITCH] <= -15) && (pm.cmd.forwardmove > 0)) {
-	// 		wishvel[2] = 200;
-	// 	} else if ((pm.viewangles[PITCH] >= 15) && (pm.cmd.forwardmove > 0)) {
-	// 		wishvel[2] = -200;
-	// 	} else if (pm.cmd.upmove > 0) {
-	// 		wishvel[2] = 200;
-	// 	} else if (pm.cmd.upmove < 0) {
-	// 		wishvel[2] = -200;
-	// 	} else {
-	// 		wishvel[2] = 0;
-	// 	}
+	if pml.ladder && (math.Abs(float64(pml.velocity[2])) <= 200) {
+		if (pm.Viewangles[shared.PITCH] <= -15) && (pm.Cmd.Forwardmove > 0) {
+			wishvel[2] = 200
+		} else if (pm.Viewangles[shared.PITCH] >= 15) && (pm.Cmd.Forwardmove > 0) {
+			wishvel[2] = -200
+		} else if pm.Cmd.Upmove > 0 {
+			wishvel[2] = 200
+		} else if pm.Cmd.Upmove < 0 {
+			wishvel[2] = -200
+		} else {
+			wishvel[2] = 0
+		}
 
-	// 	/* limit horizontal speed when on a ladder */
-	// 	if (wishvel[0] < -25) {
-	// 		wishvel[0] = -25;
-	// 	} else if (wishvel[0] > 25) {
-	// 		wishvel[0] = 25;
-	// 	}
+		/* limit horizontal speed when on a ladder */
+		if wishvel[0] < -25 {
+			wishvel[0] = -25
+		} else if wishvel[0] > 25 {
+			wishvel[0] = 25
+		}
 
-	// 	if (wishvel[1] < -25) {
-	// 		wishvel[1] = -25;
-	// 	} else if (wishvel[1] > 25) {
-	// 		wishvel[1] = 25;
-	// 	}
-	// }
+		if wishvel[1] < -25 {
+			wishvel[1] = -25
+		} else if wishvel[1] > 25 {
+			wishvel[1] = 25
+		}
+	}
 
 	// /* add water currents  */
 	// if (pm.watertype & MASK_CURRENT) != 0 {
@@ -408,6 +409,43 @@ func PM_AddCurrents(pm *shared.Pmove_t, pml *pml_t, wishvel []float32) {
 
 	// 	VectorMA(wishvel, 100, v, wishvel);
 	// }
+}
+
+func (T *qCommon) pmWaterMove(pm *shared.Pmove_t, pml *pml_t) {
+	// int i;
+	// vec3_t wishvel;
+	// float wishspeed;
+	// vec3_t wishdir;
+
+	/* user intentions */
+	wishvel := make([]float32, 3)
+	for i := 0; i < 3; i++ {
+		wishvel[i] = pml.forward[i]*float32(pm.Cmd.Forwardmove) +
+			pml.right[i]*float32(pm.Cmd.Sidemove)
+	}
+
+	if pm.Cmd.Forwardmove == 0 && pm.Cmd.Sidemove == 0 && pm.Cmd.Upmove == 0 {
+		wishvel[2] -= 60 /* drift towards bottom */
+	} else {
+		wishvel[2] += float32(pm.Cmd.Upmove)
+	}
+
+	PM_AddCurrents(pm, pml, wishvel)
+
+	wishdir := make([]float32, 3)
+	copy(wishdir, wishvel)
+	wishspeed := shared.VectorNormalize(wishdir)
+
+	if wishspeed > T.pm_maxspeed {
+		shared.VectorScale(wishvel, T.pm_maxspeed/wishspeed, wishvel)
+		wishspeed = T.pm_maxspeed
+	}
+
+	wishspeed *= 0.5
+
+	PM_Accelerate(wishdir, wishspeed, T.pm_wateraccelerate, pml)
+
+	PM_StepSlideMove(pm, pml)
 }
 
 func (T *qCommon) pmAirMove(pm *shared.Pmove_t, pml *pml_t) {
@@ -492,6 +530,112 @@ func (T *qCommon) pmAirMove(pm *shared.Pmove_t, pml *pml_t) {
 		pml.velocity[2] -= float32(pm.S.Gravity) * pml.frametime
 		PM_StepSlideMove(pm, pml)
 	}
+}
+
+func PM_CheckJump(pm *shared.Pmove_t, pml *pml_t) {
+	if (pm.S.Pm_flags & shared.PMF_TIME_LAND) != 0 {
+		/* hasn't been long enough since landing to jump again */
+		return
+	}
+
+	if pm.Cmd.Upmove < 10 {
+		/* not holding jump */
+		pm.S.Pm_flags &^= shared.PMF_JUMP_HELD
+		return
+	}
+
+	/* must wait for jump to be released */
+	if (pm.S.Pm_flags & shared.PMF_JUMP_HELD) != 0 {
+		return
+	}
+
+	if pm.S.Pm_type == shared.PM_DEAD {
+		return
+	}
+
+	if pm.Waterlevel >= 2 {
+		/* swimming, not jumping */
+		pm.Groundentity = nil
+
+		if pml.velocity[2] <= -300 {
+			return
+		}
+
+		if pm.Watertype == shared.CONTENTS_WATER {
+			pml.velocity[2] = 100
+		} else if pm.Watertype == shared.CONTENTS_SLIME {
+			pml.velocity[2] = 80
+		} else {
+			pml.velocity[2] = 50
+		}
+
+		return
+	}
+
+	if pm.Groundentity == nil {
+		return /* in air, so no effect */
+	}
+
+	pm.S.Pm_flags |= shared.PMF_JUMP_HELD
+
+	pm.Groundentity = nil
+	pml.velocity[2] += 270
+
+	if pml.velocity[2] < 270 {
+		pml.velocity[2] = 270
+	}
+}
+
+func PM_CheckSpecialMovement(pm *shared.Pmove_t, pml *pml_t) {
+	// vec3_t spot;
+	// int cont;
+	// vec3_t flatforward;
+	// trace_t trace;
+
+	if pm.S.Pm_time != 0 {
+		return
+	}
+
+	pml.ladder = false
+
+	/* check for ladder */
+	flatforward := []float32{pml.forward[0], pml.forward[1], 0}
+	shared.VectorNormalize(flatforward)
+
+	spot := make([]float32, 3)
+	shared.VectorMA(pml.origin[:], 1, flatforward, spot)
+	trace := pm.Trace(pml.origin[:], pm.Mins[:], pm.Maxs[:], spot, pm.TraceArg)
+
+	if (trace.Fraction < 1) && (trace.Contents&shared.CONTENTS_LADDER) != 0 {
+		pml.ladder = true
+	}
+
+	/* check for water jump */
+	if pm.Waterlevel != 2 {
+		return
+	}
+
+	shared.VectorMA(pml.origin[:], 30, flatforward, spot)
+	spot[2] += 4
+	cont := pm.Pointcontents(spot, pm.PCArg)
+
+	if (cont & shared.CONTENTS_SOLID) == 0 {
+		return
+	}
+
+	spot[2] += 16
+	cont = pm.Pointcontents(spot, pm.PCArg)
+
+	if cont != 0 {
+		return
+	}
+
+	/* jump out of water */
+	shared.VectorScale(flatforward, 50, pml.velocity[:])
+	pml.velocity[2] = 350
+
+	pm.S.Pm_flags |= shared.PMF_TIME_WATERJUMP
+	pm.S.Pm_time = 255
 }
 
 func PM_CatagorizePosition(pm *shared.Pmove_t, pml *pml_t) {
@@ -580,7 +724,6 @@ func PM_CatagorizePosition(pm *shared.Pmove_t, pml *pml_t) {
  * Sets mins, maxs, and pm->viewheight
  */
 func PM_CheckDuck(pm *shared.Pmove_t, pml *pml_t) {
-	//  trace_t trace;
 
 	pm.Mins[0] = -16
 	pm.Mins[1] = -16
@@ -696,13 +839,11 @@ func PM_SnapPosition(pm *shared.Pmove_t, pml *pml_t) {
 }
 
 func pmInitialSnapPosition(pm *shared.Pmove_t, pml *pml_t) {
-	// int x, y, z;
-	// short base[3];
+
 	offset := []int16{0, -1, 1}
 
 	base := make([]int16, 3)
 	copy(base, pm.S.Origin[:])
-	// VectorCopy(pm->s.origin, base);
 
 	for z := 0; z < 3; z++ {
 		pm.S.Origin[2] = base[2] + offset[z]
@@ -720,14 +861,13 @@ func pmInitialSnapPosition(pm *shared.Pmove_t, pml *pml_t) {
 					for i := 0; i < 3; i++ {
 						pml.previous_origin[i] = float32(pm.S.Origin[i])
 					}
-					// VectorCopy(pm->s.origin, pml.previous_origin);
 					return
 				}
 			}
 		}
 	}
 
-	// Com_DPrintf("Bad InitialSnapPosition\n")
+	fmt.Printf("Bad InitialSnapPosition\n")
 }
 
 func PM_ClampAngles(pm *shared.Pmove_t, pml *pml_t) {
@@ -780,8 +920,6 @@ func (T *qCommon) Pmove(pm *shared.Pmove_t) {
 	pm.Groundentity = nil
 	pm.Watertype = 0
 	pm.Waterlevel = 0
-
-	// println("PMove", pm.Cmd.Forwardmove)
 
 	/* clear all pmove local vars */
 	pml := pml_t{}
@@ -839,7 +977,7 @@ func (T *qCommon) Pmove(pm *shared.Pmove_t) {
 		// 		PM_DeadMove();
 	}
 
-	// 	PM_CheckSpecialMovement();
+	PM_CheckSpecialMovement(pm, &pml)
 
 	/* drop timing counter */
 	if pm.S.Pm_time != 0 {
@@ -869,14 +1007,14 @@ func (T *qCommon) Pmove(pm *shared.Pmove_t) {
 			pm.S.Pm_time = 0
 		}
 
-		// 		PM_StepSlideMove();
+		PM_StepSlideMove(pm, &pml)
 	} else {
-		// 		PM_CheckJump();
+		PM_CheckJump(pm, &pml)
 
 		T.pmFriction(pm, &pml)
 
 		if pm.Waterlevel >= 2 {
-			// 			PM_WaterMove();
+			T.pmWaterMove(pm, &pml)
 		} else {
 			angles := make([]float32, 3)
 			copy(angles, pm.Viewangles[:])

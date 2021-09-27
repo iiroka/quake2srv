@@ -70,11 +70,11 @@ func (G *qGame) killed(targ, inflictor, attacker *edict_t, damage int, point []f
 }
 
 func (G *qGame) spawnDamage(dtype int, origin, normal []float32) {
-	// gi.WriteByte(svc_temp_entity);
-	// gi.WriteByte(type);
-	// gi.WritePosition(origin);
-	// gi.WriteDir(normal);
-	// gi.multicast(origin, MULTICAST_PVS);
+	G.gi.WriteByte(shared.SvcTempEntity)
+	G.gi.WriteByte(dtype)
+	G.gi.WritePosition(origin)
+	G.gi.WriteDir(normal)
+	G.gi.Multicast(origin, shared.MULTICAST_PVS)
 }
 
 func (G *qGame) mReactToDamage(targ, attacker *edict_t) {

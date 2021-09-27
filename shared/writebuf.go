@@ -25,7 +25,10 @@
  */
 package shared
 
-import "log"
+import (
+	"log"
+	"math"
+)
 
 type QWritebuf struct {
 	Allowoverflow bool /* if false, do a Com_Error */
@@ -99,6 +102,16 @@ func (sb *QWritebuf) WriteShort(c int) {
 	buf[1] = byte(c >> 8)
 }
 
+func (sb *QWritebuf) WriteFloat(c float32) {
+
+	v := math.Float32bits(c)
+	buf := sb.getSpace(4)
+	buf[0] = byte(v & 0xff)
+	buf[1] = byte((v >> 8) & 0xff)
+	buf[2] = byte((v >> 16) & 0xff)
+	buf[3] = byte(v >> 24)
+}
+
 func (sb *QWritebuf) Write(data []byte) {
 	buf := sb.getSpace(len(data))
 	copy(buf, data)
@@ -138,6 +151,35 @@ func (sb *QWritebuf) WriteAngle(f float32) {
 
 func (sb *QWritebuf) WriteAngle16(f float32) {
 	sb.WriteShort(int(ANGLE2SHORT(f)))
+}
+
+func (sb *QWritebuf) WritePos(pos []float32) {
+	sb.WriteShort(int(pos[0] * 8))
+	sb.WriteShort(int(pos[1] * 8))
+	sb.WriteShort(int(pos[2] * 8))
+}
+
+func (sb *QWritebuf) WriteDir(dir []float32) {
+	// int i, best;
+	// float d, bestd;
+
+	if dir == nil {
+		sb.WriteByte(0)
+		return
+	}
+
+	var bestd float32 = 0.0
+	best := 0
+
+	for i := 0; i < NUMVERTEXNORMALS; i++ {
+		d := DotProduct(dir, bytedirs[i])
+		if d > bestd {
+			bestd = d
+			best = i
+		}
+	}
+
+	sb.WriteByte(best)
 }
 
 func (sb *QWritebuf) WriteDeltaUsercmd(from, cmd *Usercmd_t) {

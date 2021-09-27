@@ -112,6 +112,7 @@ type client_t struct {
 
 	/* The datagram is written to by sound calls, prints,
 	temp ents, etc. It can be harmlessly overflowed. */
+	datagram *shared.QWritebuf
 	// sizebuf_t datagram;
 	// byte datagram_buf[MAX_MSGLEN];
 

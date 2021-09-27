@@ -132,7 +132,6 @@ func angleMove_Done(ent *edict_t, G *qGame) {
 }
 
 func angleMove_Final(ent *edict_t, G *qGame) {
-	// vec3_t move;
 
 	if ent == nil || G == nil {
 		return
@@ -157,10 +156,6 @@ func angleMove_Final(ent *edict_t, G *qGame) {
 }
 
 func angleMove_Begin(ent *edict_t, G *qGame) {
-	// vec3_t destdelta;
-	// float len;
-	// float traveltime;
-	// float frames;
 
 	if ent == nil || G == nil {
 		return
@@ -275,9 +270,6 @@ func (G *qGame) plat_Accelerate(moveinfo *moveinfo_t) {
 	if moveinfo.current_speed == moveinfo.move_speed {
 		if (moveinfo.remaining_distance - moveinfo.current_speed) <
 			moveinfo.decel_distance {
-			// float p1_distance;
-			// float p2_distance;
-			// float distance;
 
 			p1_distance := moveinfo.remaining_distance -
 				moveinfo.decel_distance
@@ -293,11 +285,6 @@ func (G *qGame) plat_Accelerate(moveinfo *moveinfo_t) {
 
 	/* are we accelerating? */
 	if moveinfo.current_speed < moveinfo.speed {
-		// float old_speed;
-		// float p1_distance;
-		// float p1_speed;
-		// float p2_distance;
-		// float distance;
 
 		old_speed := moveinfo.current_speed
 
@@ -415,7 +402,7 @@ func (G *qGame) door_use_areaportals(self *edict_t, open bool) {
 			break
 		}
 		if t.Classname == "func_areaportal" {
-			// G.gi.SetAreaPortalState(t.Style, open)
+			G.gi.SetAreaPortalState(t.Style, open)
 		}
 	}
 }
@@ -717,7 +704,6 @@ func spFuncDoor(ent *edict_t, G *qGame) error {
 	if ent == nil || G == nil {
 		return nil
 	}
-	println("spFuncDoor")
 
 	// if (ent.sounds != 1)
 	// {

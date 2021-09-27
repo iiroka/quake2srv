@@ -240,10 +240,6 @@ func (G *qGame) svMovestep(ent *edict_t, move []float32, relink bool) bool {
 /* ============================================================================ */
 
 func M_ChangeYaw(ent *edict_t) {
-	// float ideal;
-	// float current;
-	// float move;
-	// float speed;
 
 	if ent == nil {
 		return

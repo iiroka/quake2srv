@@ -277,6 +277,7 @@ func (T *qServer) initGame() error {
 	T.svs.clients = make([]client_t, T.maxclients.Int())
 	for i := range T.svs.clients {
 		T.svs.clients[i].index = i
+		T.svs.clients[i].datagram = shared.QWritebufCreate(shared.MAX_MSGLEN)
 	}
 	T.svs.num_client_entities = T.maxclients.Int() * shared.UPDATE_BACKUP * 64
 	T.svs.client_entities = make([]shared.Entity_state_t, T.svs.num_client_entities)
@@ -380,19 +381,16 @@ func (T *qServer) svMap(attractloop bool, levelstring string, loadgame bool) err
 			return err
 		}
 	} else if strings.HasSuffix(level, ".dm2") {
-		// 	// 		SCR_BeginLoadingPlaque(); /* for local system */
 		T.svBroadcastCommand("changing\n")
 		if err := T.spawnServer(level, spawnpoint, ss_demo, attractloop, loadgame); err != nil {
 			return err
 		}
 	} else if strings.HasSuffix(level, ".pcx") {
-		// 	// 		SCR_BeginLoadingPlaque(); /* for local system */
 		T.svBroadcastCommand("changing\n")
 		if err := T.spawnServer(level, spawnpoint, ss_pic, attractloop, loadgame); err != nil {
 			return err
 		}
 	} else {
-		// 	// 		SCR_BeginLoadingPlaque(); /* for local system */
 		T.svBroadcastCommand("changing\n")
 		// 	// 		SV_SendClientMessages();
 		if err := T.spawnServer(level, spawnpoint, ss_game, attractloop, loadgame); err != nil {

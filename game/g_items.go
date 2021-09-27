@@ -43,14 +43,6 @@ func getItemByIndex(index int) *gitem_t {
 
 	return &gameitemlist[index]
 }
-func itemIndex(item *gitem_t) int {
-	for i, it := range gameitemlist {
-		if it.classname == item.classname {
-			return i
-		}
-	}
-	return 0
-}
 
 func (G *qGame) findItem(pickup_name string) *gitem_t {
 
@@ -134,12 +126,12 @@ func touch_Item(ent, other *edict_t, plane /* unused */ *shared.Cplane_t, surf /
 
 		/* show icon and name on status bar */
 		other.client.ps.Stats[shared.STAT_PICKUP_ICON] = int16(G.gi.Imageindex(ent.item.icon))
-		other.client.ps.Stats[shared.STAT_PICKUP_STRING] = int16(shared.CS_ITEMS + itemIndex(ent.item))
+		other.client.ps.Stats[shared.STAT_PICKUP_STRING] = int16(shared.CS_ITEMS + ent.item.index)
 		other.client.pickup_msg_time = G.level.time + 3.0
 
 		/* change selected item */
 		if ent.item.use != nil {
-			other.client.ps.Stats[shared.STAT_SELECTED_ITEM] = int16(itemIndex(ent.item))
+			other.client.ps.Stats[shared.STAT_SELECTED_ITEM] = int16(ent.item.index)
 			other.client.pers.selected_item = int(other.client.ps.Stats[shared.STAT_SELECTED_ITEM])
 		}
 
@@ -252,7 +244,7 @@ func droptofloor(ent *edict_t, G *qGame) {
 
 	ent.solid = shared.SOLID_TRIGGER
 	ent.movetype = MOVETYPE_TOSS
-	// ent->touch = Touch_Item;
+	ent.touch = touch_Item
 
 	dest := make([]float32, 3)
 	shared.VectorAdd(ent.s.Origin[:], []float32{0, 0, -129}, dest)
@@ -379,7 +371,100 @@ func (G *qGame) spawnItem(ent *edict_t, item *gitem_t) {
 	}
 }
 
+/* ====================================================================== */
+
+func (G *qGame) add_Ammo(ent *edict_t, item *gitem_t, count int) bool {
+	// int index;
+	// int max;
+
+	if ent == nil || item == nil {
+		return false
+	}
+
+	if ent.client == nil {
+		return false
+	}
+
+	var max int
+	if item.tag == AMMO_BULLETS {
+		max = ent.client.pers.max_bullets
+	} else if item.tag == AMMO_SHELLS {
+		max = ent.client.pers.max_shells
+	} else if item.tag == AMMO_ROCKETS {
+		max = ent.client.pers.max_rockets
+	} else if item.tag == AMMO_GRENADES {
+		max = ent.client.pers.max_grenades
+	} else if item.tag == AMMO_CELLS {
+		max = ent.client.pers.max_cells
+	} else if item.tag == AMMO_SLUGS {
+		max = ent.client.pers.max_slugs
+	} else {
+		return false
+	}
+
+	index := item.index
+
+	if ent.client.pers.inventory[index] == max {
+		return false
+	}
+
+	ent.client.pers.inventory[index] += count
+
+	if ent.client.pers.inventory[index] > max {
+		ent.client.pers.inventory[index] = max
+	}
+
+	return true
+}
+
+func Pickup_Ammo(ent, other *edict_t, G *qGame) bool {
+	return G.do_pickup_Ammo(ent, other, G)
+}
+
+func Do_Pickup_Ammo(ent, other *edict_t, G *qGame) bool {
+	// int oldcount;
+	// int count;
+	// qboolean weapon;
+
+	if ent == nil || other == nil || G == nil {
+		return false
+	}
+
+	weapon := (ent.item.flags & IT_WEAPON)
+
+	var count int
+	if (weapon != 0) && (G.dmflags.Int()&shared.DF_INFINITE_AMMO) != 0 {
+		count = 1000
+	} else if ent.count != 0 {
+		count = ent.count
+	} else {
+		count = ent.item.quantity
+	}
+
+	oldcount := other.client.pers.inventory[ent.item.index]
+
+	if !G.add_Ammo(other, ent.item, count) {
+		return false
+	}
+
+	if weapon != 0 && oldcount == 0 {
+		if (other.client.pers.weapon != ent.item) &&
+			(!G.deathmatch.Bool() ||
+				(other.client.pers.weapon == G.findItem("blaster"))) {
+			other.client.newweapon = ent.item
+		}
+	}
+
+	// if !(ent.Spawnflags & (DROPPED_ITEM | DROPPED_PLAYER_ITEM)) &&
+	// 	(G.deathmatch.value) {
+	// 	SetRespawn(ent, 30)
+	// }
+
+	return true
+}
+
 func Pickup_Health(ent, other *edict_t, G *qGame) bool {
+
 	if ent == nil || other == nil || G == nil {
 		return false
 	}
@@ -440,6 +525,90 @@ func (G *qGame) armorIndex(ent *edict_t) int {
 	return 0
 }
 
+func Pickup_Armor(ent, other *edict_t, G *qGame) bool {
+
+	if ent == nil || other == nil || G == nil {
+		return false
+	}
+	// int old_armor_index;
+	// gitem_armor_t *oldinfo;
+	// gitem_armor_t *newinfo;
+	// int newcount;
+	// float salvage;
+	// int salvagecount;
+
+	/* get info on new armor */
+	var newinfo *gitem_armor_t
+	if ent.item.info != nil {
+		newinfo = ent.item.info.(*gitem_armor_t)
+	}
+
+	old_armor_index := G.armorIndex(other)
+
+	/* handle armor shards specially */
+	if ent.item.tag == ARMOR_SHARD {
+		if old_armor_index == 0 {
+			other.client.pers.inventory[G.jacket_armor_index] = 2
+		} else {
+			other.client.pers.inventory[old_armor_index] += 2
+		}
+	} else if old_armor_index == 0 { /* if player has no armor, just use it */
+		other.client.pers.inventory[ent.item.index] = newinfo.base_count
+	} else { /* use the better armor */
+		/* get info on old armor */
+		var oldinfo *gitem_armor_t
+		if old_armor_index == G.jacket_armor_index {
+			oldinfo = &jacketarmor_info
+		} else if old_armor_index == G.combat_armor_index {
+			oldinfo = &combatarmor_info
+		} else {
+			oldinfo = &bodyarmor_info
+		}
+
+		if newinfo.normal_protection > oldinfo.normal_protection {
+			/* calc new armor values */
+			salvage := oldinfo.normal_protection / newinfo.normal_protection
+			salvagecount := int(salvage * float32(other.client.pers.inventory[old_armor_index]))
+			newcount := newinfo.base_count + salvagecount
+
+			if newcount > newinfo.max_count {
+				newcount = newinfo.max_count
+			}
+
+			/* zero count of old armor so it goes away */
+			other.client.pers.inventory[old_armor_index] = 0
+
+			/* change armor to new item with computed value */
+			other.client.pers.inventory[ent.item.index] = newcount
+		} else {
+			/* calc new armor values */
+			salvage := newinfo.normal_protection / oldinfo.normal_protection
+			salvagecount := int(salvage * float32(newinfo.base_count))
+			newcount := other.client.pers.inventory[old_armor_index] +
+				salvagecount
+
+			if newcount > oldinfo.max_count {
+				newcount = oldinfo.max_count
+			}
+
+			/* if we're already maxed out then we don't need the new armor */
+			if other.client.pers.inventory[old_armor_index] >= newcount {
+				return false
+			}
+
+			/* update current armor value */
+			other.client.pers.inventory[old_armor_index] = newcount
+		}
+	}
+
+	// if (!(ent->spawnflags & DROPPED_ITEM) && (deathmatch->value))
+	// {
+	// 	SetRespawn(ent, 20);
+	// }
+
+	return true
+}
+
 /* ====================================================================== */
 
 var gameitemlist = []gitem_t{
@@ -447,8 +616,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_armor_body (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		1,
 		"item_armor_body",
-		nil, // Pickup_Armor,
+		Pickup_Armor,
 		nil,
 		nil,
 		nil,
@@ -469,8 +639,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_armor_combat (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		2,
 		"item_armor_combat",
-		nil, // Pickup_Armor,
+		Pickup_Armor,
 		nil,
 		nil,
 		nil,
@@ -491,8 +662,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_armor_jacket (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		3,
 		"item_armor_jacket",
-		nil, // Pickup_Armor,
+		Pickup_Armor,
 		nil,
 		nil,
 		nil,
@@ -513,8 +685,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_armor_shard (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		4,
 		"item_armor_shard",
-		nil, // Pickup_Armor,
+		Pickup_Armor,
 		nil,
 		nil,
 		nil,
@@ -535,6 +708,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_power_screen (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		5,
 		"item_power_screen",
 		nil, // Pickup_PowerArmor,
 		nil, // Use_PowerArmor,
@@ -557,6 +731,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_power_shield (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		6,
 		"item_power_shield",
 		nil, // Pickup_PowerArmor,
 		nil, // Use_PowerArmor,
@@ -580,6 +755,7 @@ var gameitemlist = []gitem_t{
 	/* weapon_blaster (.3 .3 1) (-16 -16 -16) (16 16 16)
 	   always owned, never in the world */
 	{
+		7,
 		"weapon_blaster",
 		nil,
 		use_Weapon,
@@ -602,8 +778,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_shotgun (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		8,
 		"weapon_shotgun",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_Shotgun,
@@ -624,8 +801,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_supershotgun (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		9,
 		"weapon_supershotgun",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_SuperShotgun,
@@ -646,8 +824,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_machinegun (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		10,
 		"weapon_machinegun",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_Machinegun,
@@ -668,8 +847,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_chaingun (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		11,
 		"weapon_chaingun",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_Chaingun,
@@ -690,8 +870,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED ammo_grenades (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		12,
 		"ammo_grenades",
-		nil, // Pickup_Ammo,
+		Pickup_Ammo,
 		use_Weapon,
 		nil, // Drop_Ammo,
 		nil, // Weapon_Grenade,
@@ -712,8 +893,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_grenadelauncher (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		13,
 		"weapon_grenadelauncher",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_GrenadeLauncher,
@@ -734,8 +916,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_rocketlauncher (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		14,
 		"weapon_rocketlauncher",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_RocketLauncher,
@@ -756,8 +939,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_hyperblaster (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		15,
 		"weapon_hyperblaster",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_HyperBlaster,
@@ -778,8 +962,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_railgun (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		16,
 		"weapon_railgun",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_Railgun,
@@ -800,8 +985,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED weapon_bfg (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		17,
 		"weapon_bfg",
-		nil, // Pickup_Weapon,
+		Pickup_Weapon,
 		use_Weapon,
 		nil, // Drop_Weapon,
 		nil, // Weapon_BFG,
@@ -822,8 +1008,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED ammo_shells (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		18,
 		"ammo_shells",
-		nil, // Pickup_Ammo,
+		Pickup_Ammo,
 		nil,
 		nil, // Drop_Ammo,
 		nil,
@@ -844,8 +1031,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED ammo_bullets (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		19,
 		"ammo_bullets",
-		nil, // Pickup_Ammo,
+		Pickup_Ammo,
 		nil,
 		nil, // Drop_Ammo,
 		nil,
@@ -866,8 +1054,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED ammo_cells (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		20,
 		"ammo_cells",
-		nil, // Pickup_Ammo,
+		Pickup_Ammo,
 		nil,
 		nil, // Drop_Ammo,
 		nil,
@@ -888,8 +1077,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED ammo_rockets (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		21,
 		"ammo_rockets",
-		nil, // Pickup_Ammo,
+		Pickup_Ammo,
 		nil,
 		nil, // Drop_Ammo,
 		nil,
@@ -910,8 +1100,9 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED ammo_slugs (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		22,
 		"ammo_slugs",
-		nil, // Pickup_Ammo,
+		Pickup_Ammo,
 		nil,
 		nil, // Drop_Ammo,
 		nil,
@@ -932,6 +1123,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_quad (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		23,
 		"item_quad",
 		nil, // Pickup_Powerup,
 		nil, // Use_Quad,
@@ -954,6 +1146,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_invulnerability (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		24,
 		"item_invulnerability",
 		nil, // Pickup_Powerup,
 		nil, // Use_Invulnerability,
@@ -976,6 +1169,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_silencer (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		25,
 		"item_silencer",
 		nil, // Pickup_Powerup,
 		nil, // Use_Silencer,
@@ -998,6 +1192,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_breather (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		26,
 		"item_breather",
 		nil, // Pickup_Powerup,
 		nil, // Use_Breather,
@@ -1020,6 +1215,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_enviro (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		27,
 		"item_enviro",
 		nil, // Pickup_Powerup,
 		nil, // Use_Envirosuit,
@@ -1043,6 +1239,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED item_ancient_head (.3 .3 1) (-16 -16 -16) (16 16 16)
 	   Special item that gives +2 to maximum health */
 	{
+		28,
 		"item_ancient_head",
 		nil, // Pickup_AncientHead,
 		nil,
@@ -1066,6 +1263,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED item_adrenaline (.3 .3 1) (-16 -16 -16) (16 16 16)
 	   gives +1 to maximum health */
 	{
+		29,
 		"item_adrenaline",
 		nil, // Pickup_Adrenaline,
 		nil,
@@ -1088,6 +1286,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_bandolier (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		30,
 		"item_bandolier",
 		nil, // Pickup_Bandolier,
 		nil,
@@ -1110,6 +1309,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED item_pack (.3 .3 1) (-16 -16 -16) (16 16 16) */
 	{
+		31,
 		"item_pack",
 		nil, // Pickup_Pack,
 		nil,
@@ -1133,6 +1333,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_data_cd (0 .5 .8) (-16 -16 -16) (16 16 16)
 	   key for computer centers */
 	{
+		32,
 		"key_data_cd",
 		nil, // Pickup_Key,
 		nil,
@@ -1156,6 +1357,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_power_cube (0 .5 .8) (-16 -16 -16) (16 16 16) TRIGGER_SPAWN NO_TOUCH
 	   warehouse circuits */
 	{
+		33,
 		"key_power_cube",
 		nil, // Pickup_Key,
 		nil,
@@ -1179,6 +1381,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_pyramid (0 .5 .8) (-16 -16 -16) (16 16 16)
 	   key for the entrance of jail3 */
 	{
+		34,
 		"key_pyramid",
 		nil, // Pickup_Key,
 		nil,
@@ -1202,6 +1405,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_data_spinner (0 .5 .8) (-16 -16 -16) (16 16 16)
 	   key for the city computer */
 	{
+		35,
 		"key_data_spinner",
 		nil, // Pickup_Key,
 		nil,
@@ -1225,6 +1429,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_pass (0 .5 .8) (-16 -16 -16) (16 16 16)
 	   security pass for the security level */
 	{
+		36,
 		"key_pass",
 		nil, // Pickup_Key,
 		nil,
@@ -1248,6 +1453,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_blue_key (0 .5 .8) (-16 -16 -16) (16 16 16)
 	   normal door key - blue */
 	{
+		37,
 		"key_blue_key",
 		nil, // Pickup_Key,
 		nil,
@@ -1271,6 +1477,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_red_key (0 .5 .8) (-16 -16 -16) (16 16 16)
 	   normal door key - red */
 	{
+		38,
 		"key_red_key",
 		nil, // Pickup_Key,
 		nil,
@@ -1294,6 +1501,7 @@ var gameitemlist = []gitem_t{
 	/* QUAKED key_commander_head (0 .5 .8) (-16 -16 -16) (16 16 16)
 	   tank commander's head */
 	{
+		39,
 		"key_commander_head",
 		nil, // Pickup_Key,
 		nil,
@@ -1316,6 +1524,7 @@ var gameitemlist = []gitem_t{
 
 	/* QUAKED key_airstrike_target (0 .5 .8) (-16 -16 -16) (16 16 16) */
 	{
+		40,
 		"key_airstrike_target",
 		nil, // Pickup_Key,
 		nil,
@@ -1337,6 +1546,7 @@ var gameitemlist = []gitem_t{
 	},
 
 	{
+		41,
 		"",
 		Pickup_Health,
 		nil,

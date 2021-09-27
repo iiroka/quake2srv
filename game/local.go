@@ -183,6 +183,7 @@ const (
 )
 
 type gitem_t struct {
+	index             int
 	classname         string /* spawning name */
 	pickup            func(ent, other *edict_t, G *qGame) bool
 	use               func(ent *edict_t, item *gitem_t, G *qGame)
@@ -383,17 +384,17 @@ type monsterinfo_t struct {
 	walk   func(self *edict_t, G *qGame)
 	run    func(self *edict_t, G *qGame)
 	// void (*dodge)(edict_t *self, edict_t *other, float eta);
-	// void (*attack)(edict_t *self);
-	// void (*melee)(edict_t *self);
-	// void (*sight)(edict_t *self, edict_t *other);
+	attack      func(self *edict_t, G *qGame)
+	melee       func(self *edict_t, G *qGame)
+	sight       func(self, other *edict_t, G *qGame)
 	checkattack func(self *edict_t, G *qGame) bool
 
 	pausetime       float32
 	attack_finished float32
 
 	// vec3_t saved_goal;
-	// float search_time;
-	// float trail_time;
+	search_time   float32
+	trail_time    float32
 	last_sighting [3]float32
 	attack_state  int
 	// int lefty;
@@ -415,15 +416,15 @@ func (G *monsterinfo_t) copy(other monsterinfo_t) {
 	G.walk = other.walk
 	G.run = other.run
 	// void (*dodge)(edict_t *self, edict_t *other, float eta);
-	// void (*attack)(edict_t *self);
-	// void (*melee)(edict_t *self);
-	// void (*sight)(edict_t *self, edict_t *other);
+	G.attack = other.attack
+	G.melee = other.melee
+	G.sight = other.sight
 	G.checkattack = other.checkattack
 	G.pausetime = other.pausetime
 	G.attack_finished = other.attack_finished
 	// vec3_t saved_goal;
-	// float search_time;
-	// float trail_time;
+	G.search_time = other.search_time
+	G.trail_time = other.trail_time
 	copy(G.last_sighting[:], other.last_sighting[:])
 	G.attack_state = other.attack_state
 	// int lefty;
@@ -485,6 +486,13 @@ const (
 	DAMAGE_BULLET        = 0x00000010 /* damage is from a bullet (used for ricochets) */
 	DAMAGE_NO_PROTECTION = 0x00000020 /* armor, shields, invulnerability, and godmode have no effect */
 
+	DEFAULT_BULLET_HSPREAD           = 300
+	DEFAULT_BULLET_VSPREAD           = 500
+	DEFAULT_SHOTGUN_HSPREAD          = 1000
+	DEFAULT_SHOTGUN_VSPREAD          = 500
+	DEFAULT_DEATHMATCH_SHOTGUN_COUNT = 12
+	DEFAULT_SHOTGUN_COUNT            = 12
+	DEFAULT_SSHOTGUN_COUNT           = 20
 )
 
 /* ============================================================================ */
@@ -826,11 +834,11 @@ type edict_t struct {
 	pain  func(self, other *edict_t, kick float32, damage int, G *qGame)
 	die   func(self, inflictor, attacker *edict_t, damage int, point []float32, G *qGame)
 
-	touch_debounce_time float32
-	// float pain_debounce_time;
-	// float damage_debounce_time;
-	// float fly_sound_debounce_time;	/* now also used by insane marines to store pain sound timeout */
-	// float last_move_time;
+	touch_debounce_time     float32
+	pain_debounce_time      float32
+	damage_debounce_time    float32
+	fly_sound_debounce_time float32 /* now also used by insane marines to store pain sound timeout */
+	last_move_time          float32
 
 	Health     int
 	max_health int
@@ -1122,9 +1130,9 @@ const (
 	F_FLOAT     fieldtype_t = 1
 	F_LSTRING   fieldtype_t = 2
 	F_GSTRING   fieldtype_t = 3 /* string on disk, pointer in memory, TAG_GAME */
-	F_VECTOR    fieldtype_t = 3
-	F_ANGLEHACK fieldtype_t = 4
-	F_IGNORE    fieldtype_t = 5
+	F_VECTOR    fieldtype_t = 4
+	F_ANGLEHACK fieldtype_t = 5
+	F_IGNORE    fieldtype_t = 6
 )
 
 type field_t struct {
@@ -1197,15 +1205,16 @@ type qGame struct {
 
 	pm_passent *edict_t
 
-	current_player         *edict_t
-	current_client         *gclient_t
-	player_view_forward    [3]float32
-	player_view_right      [3]float32
-	player_view_up         [3]float32
-	player_view_xyspeed    float32
-	player_view_bobmove    float32
-	player_view_bobcycle   int
-	player_view_bobfracsin float32
+	current_player            *edict_t
+	current_client            *gclient_t
+	player_view_forward       [3]float32
+	player_view_right         [3]float32
+	player_view_up            [3]float32
+	player_view_xyspeed       float32
+	player_view_bobmove       float32
+	player_view_bobcycle      int
+	player_view_bobfracsin    float32
+	player_weapon_is_silenced int
 
 	enemy_vis     bool
 	enemy_infront bool
@@ -1221,10 +1230,15 @@ type qGame struct {
 	body_armor_index   int
 	power_screen_index int
 	power_shield_index int
+
+	do_pickup_Weapon func(ent, other *edict_t, G *qGame) bool
+	do_pickup_Ammo   func(ent, other *edict_t, G *qGame) bool
 }
 
 func QGameCreate(gi shared.Game_import_t) shared.Game_export_t {
 	g := &qGame{}
 	g.gi = gi
+	g.do_pickup_Weapon = Do_Pickup_Weapon
+	g.do_pickup_Ammo = Do_Pickup_Ammo
 	return g
 }

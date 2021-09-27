@@ -237,8 +237,8 @@ func (T *qServer) directConnect(args []string, adr string) error {
 
 	T.svs.clients[index].state = cs_connected
 
-	// 	 SZ_Init(&newcl->datagram, newcl->datagram_buf, sizeof(newcl->datagram_buf));
-	// 	 newcl->datagram.allowoverflow = true;
+	T.svs.clients[index].datagram = shared.QWritebufCreate(shared.MAX_MSGLEN)
+	T.svs.clients[index].datagram.Allowoverflow = true
 	T.svs.clients[index].lastmessage = T.svs.realtime /* don't timeout */
 	T.svs.clients[index].lastconnect = T.svs.realtime
 	return nil

@@ -178,9 +178,9 @@ func (T *qFileSystem) LoadFile(path string) ([]byte, error) {
 
 		}
 	}
-	if T.fs_debug {
-		log.Printf("FS_LoadFile: couldn't find '%s'.\n", path)
-	}
+	// if T.fs_debug {
+	log.Printf("FS_LoadFile: couldn't find '%s'.\n", path)
+	// }
 	return nil, nil
 }
 

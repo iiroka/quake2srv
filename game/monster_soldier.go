@@ -397,20 +397,18 @@ func soldier_pain(self, other *edict_t, kick float32, damage int, G *qGame) {
 		self.s.Skinnum |= 1
 	}
 
-	// if (level.time < self->pain_debounce_time)
-	// {
-	// 	if ((self->velocity[2] > 100) &&
-	// 		((self->monsterinfo.currentmove == &soldier_move_pain1) ||
-	// 		 (self->monsterinfo.currentmove == &soldier_move_pain2) ||
-	// 		 (self->monsterinfo.currentmove == &soldier_move_pain3)))
-	// 	{
-	// 		self->monsterinfo.currentmove = &soldier_move_pain4;
-	// 	}
+	if G.level.time < self.pain_debounce_time {
+		if (self.velocity[2] > 100) &&
+			((self.monsterinfo.currentmove == &soldier_move_pain1) ||
+				(self.monsterinfo.currentmove == &soldier_move_pain2) ||
+				(self.monsterinfo.currentmove == &soldier_move_pain3)) {
+			self.monsterinfo.currentmove = &soldier_move_pain4
+		}
 
-	// 	return;
-	// }
+		return
+	}
 
-	// self->pain_debounce_time = level.time + 3;
+	self.pain_debounce_time = G.level.time + 3
 
 	// n := self.s.skinnum | 1;
 
@@ -427,16 +425,14 @@ func soldier_pain(self, other *edict_t, kick float32, damage int, G *qGame) {
 	// 	gi.sound(self, CHAN_VOICE, sound_pain_ss, 1, ATTN_NORM, 0);
 	// }
 
-	// if (self->velocity[2] > 100)
-	// {
-	// 	self->monsterinfo.currentmove = &soldier_move_pain4;
-	// 	return;
-	// }
+	if self.velocity[2] > 100 {
+		self.monsterinfo.currentmove = &soldier_move_pain4
+		return
+	}
 
-	// if (skill->value == SKILL_HARDPLUS)
-	// {
-	// 	return; /* no pain anims in nightmare */
-	// }
+	if G.skill.Int() == SKILL_HARDPLUS {
+		return /* no pain anims in nightmare */
+	}
 
 	r := shared.Frandk()
 
@@ -495,71 +491,405 @@ func (G *qGame) soldier_fire(self *edict_t, flash_number int) {
 		return
 	}
 
-	// var flash_index int
-	// if (self.s.Skinnum < 2) {
-	// 	flash_index = blaster_flash[flash_number];
-	// } else if (self.s.Skinnum < 4) {
-	// 	flash_index = shotgun_flash[flash_number];
+	var flash_index int
+	if self.s.Skinnum < 2 {
+		flash_index = blaster_flash[flash_number]
+	} else if self.s.Skinnum < 4 {
+		flash_index = shotgun_flash[flash_number]
+	} else {
+		flash_index = machinegun_flash[flash_number]
+	}
+
+	forward := make([]float32, 3)
+	right := make([]float32, 3)
+	shared.AngleVectors(self.s.Angles[:], forward, right, nil)
+	start := make([]float32, 3)
+	gProjectSource(self.s.Origin[:], shared.MonsterFlashOffset[flash_index], forward, right, start)
+
+	aim := make([]float32, 3)
+	if (flash_number == 5) || (flash_number == 6) {
+		copy(aim, forward)
+	} else {
+		end := make([]float32, 3)
+		copy(end, self.enemy.s.Origin[:])
+		end[2] += float32(self.enemy.viewheight)
+		shared.VectorSubtract(end, start, aim)
+		dir := make([]float32, 3)
+		vectoangles(aim, dir)
+		up := make([]float32, 3)
+		shared.AngleVectors(dir, forward, right, up)
+
+		r := shared.Crandk() * 1000
+		u := shared.Crandk() * 500
+		shared.VectorMA(start, 8192, forward, end)
+		shared.VectorMA(end, r, right, end)
+		shared.VectorMA(end, u, up, end)
+
+		shared.VectorSubtract(end, start, aim)
+		shared.VectorNormalize(aim)
+	}
+
+	if self.s.Skinnum <= 1 {
+		G.monster_fire_blaster(self, start, aim, 5, 600, flash_index, shared.EF_BLASTER)
+	} else if self.s.Skinnum <= 3 {
+		G.monster_fire_shotgun(self, start, aim, 2, 1,
+			DEFAULT_SHOTGUN_HSPREAD, DEFAULT_SHOTGUN_VSPREAD,
+			DEFAULT_SHOTGUN_COUNT, flash_index)
+	} else {
+		println("monster_fire_bullet")
+		// 	if ((self->monsterinfo.aiflags & AI_HOLD_FRAME) == 0) {
+		// 		self->monsterinfo.pausetime = level.time + (3 + randk() % 8) * FRAMETIME;
+		// 	}
+
+		// 	monster_fire_bullet(self, start, aim, 2, 4,
+		// 			DEFAULT_BULLET_HSPREAD, DEFAULT_BULLET_VSPREAD,
+		// 			flash_index);
+
+		// 	if (level.time >= self->monsterinfo.pausetime)
+		// 	{
+		// 		self->monsterinfo.aiflags &= ~AI_HOLD_FRAME;
+		// 	}
+		// 	else
+		// 	{
+		// 		self->monsterinfo.aiflags |= AI_HOLD_FRAME;
+		// 	}
+	}
+}
+
+/* ATTACK1 (blaster/shotgun) */
+func soldier_fire1(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	G.soldier_fire(self, 0)
+}
+
+func soldier_attack1_refire1(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	if self.s.Skinnum > 1 {
+		return
+	}
+
+	if self.enemy.Health <= 0 {
+		return
+	}
+
+	if ((G.skill.Int() == SKILL_HARDPLUS) &&
+		(shared.Frandk() < 0.5)) || (range_(self, self.enemy) == RANGE_MELEE) {
+		self.monsterinfo.nextframe = soldier.FRAME_attak102
+	} else {
+		self.monsterinfo.nextframe = soldier.FRAME_attak110
+	}
+}
+
+func soldier_attack1_refire2(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	if self.s.Skinnum < 2 {
+		return
+	}
+
+	if self.enemy.Health <= 0 {
+		return
+	}
+
+	if ((G.skill.Int() == SKILL_HARDPLUS) &&
+		(shared.Frandk() < 0.5)) || (range_(self, self.enemy) == RANGE_MELEE) {
+		self.monsterinfo.nextframe = soldier.FRAME_attak102
+	}
+}
+
+var soldier_frames_attack1 = []mframe_t{
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_fire1},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_attack1_refire1},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_cock},
+	{ai_charge, 0, soldier_attack1_refire2},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+}
+
+var soldier_move_attack1 = mmove_t{
+	soldier.FRAME_attak101,
+	soldier.FRAME_attak112,
+	soldier_frames_attack1,
+	soldier_run,
+}
+
+/* ATTACK2 (blaster/shotgun) */
+func soldier_fire2(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	G.soldier_fire(self, 1)
+}
+
+func soldier_attack2_refire1(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	if self.s.Skinnum > 1 {
+		return
+	}
+
+	if self.enemy.Health <= 0 {
+		return
+	}
+
+	if ((G.skill.Int() == SKILL_HARDPLUS) &&
+		(shared.Frandk() < 0.5)) || (range_(self, self.enemy) == RANGE_MELEE) {
+		self.monsterinfo.nextframe = soldier.FRAME_attak204
+	} else {
+		self.monsterinfo.nextframe = soldier.FRAME_attak216
+	}
+}
+
+func soldier_attack2_refire2(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	if self.s.Skinnum < 2 {
+		return
+	}
+
+	if self.enemy.Health <= 0 {
+		return
+	}
+
+	if ((G.skill.Int() == SKILL_HARDPLUS) &&
+		(shared.Frandk() < 0.5)) || (range_(self, self.enemy) == RANGE_MELEE) {
+		self.monsterinfo.nextframe = soldier.FRAME_attak204
+	}
+}
+
+var soldier_frames_attack2 = []mframe_t{
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_fire2},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_attack2_refire1},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_cock},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_attack2_refire2},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+}
+
+var soldier_move_attack2 = mmove_t{
+	soldier.FRAME_attak201,
+	soldier.FRAME_attak218,
+	soldier_frames_attack2,
+	soldier_run,
+}
+
+/* ATTACK3 (duck and shoot) */
+func (G *qGame) soldier_duck_down(self *edict_t) {
+
+	if self == nil {
+		return
+	}
+
+	if (self.monsterinfo.aiflags & AI_DUCKED) != 0 {
+		return
+	}
+
+	self.monsterinfo.aiflags |= AI_DUCKED
+	self.maxs[2] -= 32
+	self.takedamage = DAMAGE_YES
+	self.monsterinfo.pausetime = G.level.time + 1
+	G.gi.Linkentity(self)
+}
+
+func soldier_duck_up(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	self.monsterinfo.aiflags &^= AI_DUCKED
+	self.maxs[2] += 32
+	self.takedamage = DAMAGE_AIM
+	G.gi.Linkentity(self)
+}
+
+func soldier_fire3(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	G.soldier_duck_down(self)
+	G.soldier_fire(self, 2)
+}
+
+func soldier_attack3_refire(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	if (G.level.time + 0.4) < self.monsterinfo.pausetime {
+		self.monsterinfo.nextframe = soldier.FRAME_attak303
+	}
+}
+
+var soldier_frames_attack3 = []mframe_t{
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_fire3},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_attack3_refire},
+	{ai_charge, 0, soldier_duck_up},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+}
+
+var soldier_move_attack3 = mmove_t{
+	soldier.FRAME_attak301,
+	soldier.FRAME_attak309,
+	soldier_frames_attack3,
+	soldier_run,
+}
+
+/* ATTACK4 (machinegun) */
+func soldier_fire4(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	G.soldier_fire(self, 3)
+}
+
+var soldier_frames_attack4 = []mframe_t{
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, soldier_fire4},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+	{ai_charge, 0, nil},
+}
+
+var soldier_move_attack4 = mmove_t{
+	soldier.FRAME_attak401,
+	soldier.FRAME_attak406,
+	soldier_frames_attack4,
+	soldier_run,
+}
+
+/* ATTACK6 (run & shoot) */
+func soldier_fire8(self *edict_t, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	G.soldier_fire(self, 7)
+}
+
+func soldier_attack6_refire(self *edict_t, G *qGame) {
+	if self == nil || G == nil {
+		return
+	}
+
+	if self.enemy.Health <= 0 {
+		return
+	}
+
+	if range_(self, self.enemy) < RANGE_MID {
+		return
+	}
+
+	if G.skill.Int() == SKILL_HARDPLUS {
+		self.monsterinfo.nextframe = soldier.FRAME_runs03
+	}
+}
+
+var soldier_frames_attack6 = []mframe_t{
+	{ai_charge, 10, nil},
+	{ai_charge, 4, nil},
+	{ai_charge, 12, nil},
+	{ai_charge, 11, soldier_fire8},
+	{ai_charge, 13, nil},
+	{ai_charge, 18, nil},
+	{ai_charge, 15, nil},
+	{ai_charge, 14, nil},
+	{ai_charge, 11, nil},
+	{ai_charge, 8, nil},
+	{ai_charge, 11, nil},
+	{ai_charge, 12, nil},
+	{ai_charge, 12, nil},
+	{ai_charge, 17, soldier_attack6_refire},
+}
+
+var soldier_move_attack6 = mmove_t{
+	soldier.FRAME_runs01,
+	soldier.FRAME_runs14,
+	soldier_frames_attack6,
+	soldier_run,
+}
+
+func soldier_attack(self *edict_t, G *qGame) {
+	if self == nil || G == nil {
+		return
+	}
+
+	if self.s.Skinnum < 4 {
+		if shared.Frandk() < 0.5 {
+			self.monsterinfo.currentmove = &soldier_move_attack1
+		} else {
+			self.monsterinfo.currentmove = &soldier_move_attack2
+		}
+	} else {
+		self.monsterinfo.currentmove = &soldier_move_attack4
+	}
+}
+
+func soldier_sight(self, other *edict_t, G *qGame) {
+	if self == nil || G == nil {
+		return
+	}
+
+	// if (random() < 0.5) {
+	// 	gi.sound(self, CHAN_VOICE, sound_sight1, 1, ATTN_NORM, 0);
 	// } else {
-	// 	flash_index = machinegun_flash[flash_number];
+	// 	gi.sound(self, CHAN_VOICE, sound_sight2, 1, ATTN_NORM, 0);
 	// }
 
-	// AngleVectors(self->s.angles, forward, right, NULL);
-	// G_ProjectSource(self->s.origin, monster_flash_offset[flash_index],
-	// 		forward, right, start);
-
-	// if ((flash_number == 5) || (flash_number == 6))
-	// {
-	// 	VectorCopy(forward, aim);
-	// }
-	// else
-	// {
-	// 	VectorCopy(self->enemy->s.origin, end);
-	// 	end[2] += self->enemy->viewheight;
-	// 	VectorSubtract(end, start, aim);
-	// 	vectoangles(aim, dir);
-	// 	AngleVectors(dir, forward, right, up);
-
-	// 	r = crandom() * 1000;
-	// 	u = crandom() * 500;
-	// 	VectorMA(start, 8192, forward, end);
-	// 	VectorMA(end, r, right, end);
-	// 	VectorMA(end, u, up, end);
-
-	// 	VectorSubtract(end, start, aim);
-	// 	VectorNormalize(aim);
-	// }
-
-	// if (self->s.skinnum <= 1)
-	// {
-	// 	monster_fire_blaster(self, start, aim, 5, 600, flash_index, EF_BLASTER);
-	// }
-	// else if (self->s.skinnum <= 3)
-	// {
-	// 	monster_fire_shotgun(self, start, aim, 2, 1,
-	// 			DEFAULT_SHOTGUN_HSPREAD, DEFAULT_SHOTGUN_VSPREAD,
-	// 			DEFAULT_SHOTGUN_COUNT, flash_index);
-	// }
-	// else
-	// {
-	// 	if (!(self->monsterinfo.aiflags & AI_HOLD_FRAME))
-	// 	{
-	// 		self->monsterinfo.pausetime = level.time + (3 + randk() % 8) * FRAMETIME;
-	// 	}
-
-	// 	monster_fire_bullet(self, start, aim, 2, 4,
-	// 			DEFAULT_BULLET_HSPREAD, DEFAULT_BULLET_VSPREAD,
-	// 			flash_index);
-
-	// 	if (level.time >= self->monsterinfo.pausetime)
-	// 	{
-	// 		self->monsterinfo.aiflags &= ~AI_HOLD_FRAME;
-	// 	}
-	// 	else
-	// 	{
-	// 		self->monsterinfo.aiflags |= AI_HOLD_FRAME;
-	// 	}
-	// }
+	if (G.skill.Int() > SKILL_EASY) && (range_(self, self.enemy) >= RANGE_MID) {
+		if shared.Frandk() > 0.5 {
+			self.monsterinfo.currentmove = &soldier_move_attack6
+		}
+	}
 }
 
 func soldier_fire6(self *edict_t, G *qGame) {
@@ -960,10 +1290,10 @@ func (G *qGame) spMonsterSoldierX(self *edict_t) {
 	self.monsterinfo.stand = soldier_stand
 	self.monsterinfo.walk = soldier_walk
 	self.monsterinfo.run = soldier_run
-	// self->monsterinfo.dodge = soldier_dodge;
-	// self->monsterinfo.attack = soldier_attack;
-	// self->monsterinfo.melee = NULL;
-	// self.monsterinfo.sight = soldier_sight
+	// self.monsterinfo.dodge = soldier_dodge
+	self.monsterinfo.attack = soldier_attack
+	self.monsterinfo.melee = nil
+	self.monsterinfo.sight = soldier_sight
 
 	G.gi.Linkentity(self)
 

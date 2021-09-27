@@ -140,6 +140,66 @@ func (G *qGame) playerNoise(who *edict_t, where []float32, ntype int) {
 	G.gi.Linkentity(noise)
 }
 
+func Pickup_Weapon(ent, other *edict_t, G *qGame) bool {
+	return G.do_pickup_Weapon(ent, other, G)
+}
+
+func Do_Pickup_Weapon(ent, other *edict_t, G *qGame) bool {
+	// int index;
+	// gitem_t *ammo;
+
+	println("Do_Pickup_Weapon")
+	if ent == nil || other == nil || G == nil {
+		return false
+	}
+
+	index := ent.item.index
+
+	if ((G.dmflags.Int()&shared.DF_WEAPONS_STAY) != 0 || G.coop.Bool()) &&
+		other.client.pers.inventory[index] != 0 {
+		if (ent.Spawnflags&(DROPPED_ITEM|DROPPED_PLAYER_ITEM)) == 0 &&
+			(!G.coop_pickup_weapons.Bool() || (ent.flags&FL_COOP_TAKEN) != 0) {
+			return false /* leave the weapon for others to pickup */
+		}
+	}
+
+	other.client.pers.inventory[index]++
+
+	if (ent.Spawnflags & DROPPED_ITEM) == 0 {
+		/* give them some ammo with it */
+		ammo := G.findItem(ent.item.ammo)
+
+		if (G.dmflags.Int() & shared.DF_INFINITE_AMMO) != 0 {
+			G.add_Ammo(other, ammo, 1000)
+		} else {
+			G.add_Ammo(other, ammo, ammo.quantity)
+		}
+
+		if (ent.Spawnflags & DROPPED_PLAYER_ITEM) == 0 {
+			if G.deathmatch.Bool() {
+				if (G.dmflags.Int() & shared.DF_WEAPONS_STAY) != 0 {
+					ent.flags |= FL_RESPAWN
+				} else {
+					// SetRespawn(ent, 30)
+				}
+			}
+
+			if G.coop.Bool() {
+				ent.flags |= FL_RESPAWN
+				ent.flags |= FL_COOP_TAKEN
+			}
+		}
+	}
+
+	if (other.client.pers.weapon != ent.item) &&
+		(other.client.pers.inventory[index] == 1) &&
+		(!G.deathmatch.Bool() || (other.client.pers.weapon == G.findItem("blaster"))) {
+		other.client.newweapon = ent.item
+	}
+
+	return true
+}
+
 /*
  * The old weapon has been dropped all
  * the way, so make the new one current
@@ -219,13 +279,11 @@ func (G *qGame) thinkWeapon(ent *edict_t) {
 	if ent.client.pers.weapon != nil && ent.client.pers.weapon.weaponthink != nil {
 		// 	 is_quad = (ent->client->quad_framenum > level.framenum);
 
-		// 	 if (ent->client->silencer_shots) {
-		// 		 is_silenced = MZ_SILENCED;
-		// 	 }
-		// 	 else
-		// 	 {
-		// 		 is_silenced = 0;
-		// 	 }
+		//  if (ent.client.silencer_shots) {
+		// 	 is_silenced = MZ_SILENCED;
+		//  } else {
+		G.player_weapon_is_silenced = 0
+		//  }
 
 		ent.client.pers.weapon.weaponthink(ent, G)
 	}
@@ -448,8 +506,8 @@ func (G *qGame) blaster_Fire(ent *edict_t, g_offset []float32, damage int,
 	G.fire_blaster(ent, start, forward, damage, 1000, effect, hyper)
 
 	/* send muzzle flash */
-	// G.gi.WriteByte(shared.SvcMuzzleflash)
-	// G.gi.WriteShort(ent.index)
+	G.gi.WriteByte(shared.SvcMuzzleflash)
+	G.gi.WriteShort(ent.index)
 
 	// if (hyper)
 	// {
@@ -457,10 +515,10 @@ func (G *qGame) blaster_Fire(ent *edict_t, g_offset []float32, damage int,
 	// }
 	// else
 	// {
-	// 	gi.WriteByte(MZ_BLASTER | is_silenced);
+	G.gi.WriteByte(shared.MZ_BLASTER | G.player_weapon_is_silenced)
 	// }
 
-	// gi.multicast(ent->s.origin, MULTICAST_PVS);
+	G.gi.Multicast(ent.s.Origin[:], shared.MULTICAST_PVS)
 
 	G.playerNoise(ent, start, PNOISE_WEAPON)
 }

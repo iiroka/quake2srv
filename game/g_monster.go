@@ -27,6 +27,37 @@ package game
 
 import "quake2srv/shared"
 
+func (G *qGame) monster_fire_shotgun(self *edict_t, start, aimdir []float32, damage,
+	kick, hspread, vspread, count, flashtype int) {
+
+	if self == nil {
+		return
+	}
+
+	G.fire_shotgun(self, start, aimdir, damage, kick, hspread,
+		vspread, count, MOD_UNKNOWN)
+
+	G.gi.WriteByte(shared.SvcMuzzleflash2)
+	G.gi.WriteShort(self.index)
+	G.gi.WriteByte(flashtype)
+	G.gi.Multicast(start, shared.MULTICAST_PVS)
+}
+
+func (G *qGame) monster_fire_blaster(self *edict_t, start, dir []float32, damage,
+	speed, flashtype, effect int) {
+
+	if self == nil {
+		return
+	}
+
+	G.fire_blaster(self, start, dir, damage, speed, effect, false)
+
+	G.gi.WriteByte(shared.SvcMuzzleflash2)
+	G.gi.WriteShort(self.index)
+	G.gi.WriteByte(flashtype)
+	G.gi.Multicast(start, shared.MULTICAST_PVS)
+}
+
 func (G *qGame) mCheckGround(ent *edict_t) {
 	// vec3_t point;
 	// trace_t trace;
@@ -210,6 +241,37 @@ func monster_think(self *edict_t, G *qGame) {
 	// M_SetEffects(self);
 }
 
+/*
+ * Using a monster makes it angry
+ * at the current activator
+ */
+func monster_use(self, other, activator *edict_t, G *qGame) {
+	if self == nil || activator == nil || G == nil {
+		return
+	}
+
+	if self.enemy != nil {
+		return
+	}
+
+	if self.Health <= 0 {
+		return
+	}
+
+	if (activator.flags & FL_NOTARGET) != 0 {
+		return
+	}
+
+	if activator.client == nil && (activator.monsterinfo.aiflags&AI_GOOD_GUY) == 0 {
+		return
+	}
+
+	/* delay reaction so if the monster is
+	teleported, its sound is still heard */
+	self.enemy = activator
+	G.foundTarget(self)
+}
+
 func (G *qGame) monster_triggered_start(self *edict_t) {
 	if self == nil {
 		return
@@ -284,7 +346,7 @@ func (G *qGame) monster_start(self *edict_t) bool {
 	self.s.Renderfx |= shared.RF_FRAMELERP
 	self.takedamage = DAMAGE_AIM
 	// self.air_finished = level.time + 12
-	// self.use = monster_use
+	self.use = monster_use
 
 	if self.max_health == 0 {
 		self.max_health = self.Health

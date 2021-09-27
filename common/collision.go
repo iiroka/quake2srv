@@ -162,6 +162,16 @@ func (T *qCommon) floodAreaConnections() {
 	}
 }
 
+func (T *qCommon) CMSetAreaPortalState(portalnum int, open bool) {
+	if portalnum > T.collision.numareaportals {
+		T.Com_Error(shared.ERR_DROP, "areaportal > numareaportals")
+		return
+	}
+
+	T.collision.portalopen[portalnum] = open
+	T.floodAreaConnections()
+}
+
 func (T *qCommon) CMAreasConnected(area1, area2 int) bool {
 	if T.collision.map_noareas.Bool() {
 		return true
@@ -467,15 +477,6 @@ func (T *qCommon) CMTransformedPointContents(p []float32, headnode int, origin, 
 }
 
 func (T *qCommon) clipBoxToBrush(mins, maxs, p1, p2 []float32, trace *shared.Trace_t, brush *cbrush_t) {
-	// int i, j;
-	// cplane_t *plane, *clipplane;
-	// float dist;
-	// float enterfrac, leavefrac;
-	// vec3_t ofs;
-	// float d1, d2;
-	// qboolean getout, startout;
-	// float f;
-	// cbrushside_t *side, *leadside;
 
 	var enterfrac float32 = -1
 	var leavefrac float32 = 1
@@ -1200,6 +1201,8 @@ func (T *qCommon) cmodLoadBrushSides(l shared.Lump_t, name string, buf []byte) e
 
 		if j > 0 {
 			out.surface = &T.collision.map_surfaces[j]
+		} else {
+			out.surface = &T.collision.nullsurface
 		}
 	}
 	return nil

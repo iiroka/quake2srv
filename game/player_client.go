@@ -33,6 +33,16 @@ import (
 
 /* ======================================================================= */
 
+func player_pain(self, other *edict_t, kick float32, damage int, G *qGame) {
+	/* Player pain is handled at the end
+	 * of the frame in P_DamageFeedback.
+	 * This function is still here since
+	 * the player is an entity and needs
+	 * a pain callback */
+}
+
+/* ======================================================================= */
+
 /*
  * This is only called when the game first
  * initializes in single player, but is called
@@ -401,7 +411,7 @@ func (G *qGame) putClientInServer(ent *edict_t) error {
 	//  ent->air_finished = level.time + 12;
 	ent.clipmask = shared.MASK_PLAYERSOLID
 	ent.Model = "players/male/tris.md2"
-	//  ent->pain = player_pain;
+	ent.pain = player_pain
 	//  ent->die = player_die;
 	ent.waterlevel = 0
 	ent.watertype = 0
@@ -685,6 +695,32 @@ func (G *qGame) initClientResp(client *gclient_t) {
 	client.resp = client_respawn_t{}
 	client.resp.enterframe = G.level.framenum
 	client.resp.coop_respawn = client.pers
+}
+
+/*
+ * Some information that should be persistant, like health,
+ * is still stored in the edict structure, so it needs to
+ * be mirrored out to the client structure before all the
+ * edicts are wiped.
+ */
+func (G *qGame) saveClientData() {
+
+	for i := 0; i < G.game.maxclients; i++ {
+		ent := &G.g_edicts[1+i]
+
+		if !ent.inuse {
+			continue
+		}
+
+		G.game.clients[i].pers.health = ent.Health
+		G.game.clients[i].pers.max_health = ent.max_health
+		G.game.clients[i].pers.savedFlags =
+			(ent.flags & (FL_GODMODE | FL_NOTARGET | FL_POWER_ARMOR))
+
+		if G.coop.Bool() {
+			G.game.clients[i].pers.score = ent.client.resp.score
+		}
+	}
 }
 
 func (G *qGame) fetchClientEntData(ent *edict_t) {

@@ -122,6 +122,30 @@ func ai_walk(self *edict_t, dist float32, G *qGame) {
 	}
 }
 
+/*
+ * Turns towards target and advances
+ * Use this call with a distance of 0
+ * to replace ai_face
+ */
+func ai_charge(self *edict_t, dist float32, G *qGame) {
+
+	if self == nil || G == nil {
+		return
+	}
+
+	v := make([]float32, 3)
+	if self.enemy != nil {
+		shared.VectorSubtract(self.enemy.s.Origin[:], self.s.Origin[:], v)
+	}
+
+	self.ideal_yaw = vectoyaw(v)
+	M_ChangeYaw(self)
+
+	if dist != 0 {
+		G.mWalkmove(self, self.s.Angles[shared.YAW], dist)
+	}
+}
+
 /* ============================================================================ */
 
 /*
@@ -254,7 +278,7 @@ func (G *qGame) huntTarget(self *edict_t) {
 
 	self.ideal_yaw = vectoyaw(vec)
 
-	// /* wait a while before first attack */
+	/* wait a while before first attack */
 	if (self.monsterinfo.aiflags & AI_STAND_GROUND) == 0 {
 		// 	AttackFinished(self, 1);
 	}
@@ -275,7 +299,7 @@ func (G *qGame) foundTarget(self *edict_t) {
 	self.show_hostile = G.level.time + 1 /* wake up other monsters */
 
 	copy(self.monsterinfo.last_sighting[:], self.enemy.s.Origin[:])
-	// self->monsterinfo.trail_time = level.time;
+	// self.monsterinfo.trail_time = level.time
 
 	if len(self.Combattarget) == 0 {
 		G.huntTarget(self)
@@ -326,9 +350,6 @@ func (G *qGame) foundTarget(self *edict_t) {
  * slower noticing monsters.
  */
 func (G *qGame) findTarget(self *edict_t) bool {
-	//  edict_t *client;
-	//  qboolean heardit;
-	//  int r;
 
 	if self == nil {
 		return false
@@ -432,16 +453,14 @@ func (G *qGame) findTarget(self *edict_t) bool {
 		if self.enemy.Classname != "player_noise" {
 			self.monsterinfo.aiflags &^= AI_SOUND_TARGET
 
-			// 		 if (!self.enemy.client)
-			// 		 {
-			// 			 self.enemy = self.enemy.enemy;
+			if self.enemy.client == nil {
+				self.enemy = self.enemy.enemy
 
-			// 			 if (!self->enemy->client)
-			// 			 {
-			// 				 self->enemy = NULL;
-			// 				 return false;
-			// 			 }
-			// 		 }
+				if self.enemy.client == nil {
+					self.enemy = nil
+					return false
+				}
+			}
 		}
 	} else { /* heardit */
 
@@ -465,9 +484,9 @@ func (G *qGame) findTarget(self *edict_t) bool {
 		/* check area portals - if they are different
 		and not connected then we can't hear it */
 		if client.areanum != self.areanum {
-			// if !G.gi.AreasConnected(self.areanum, client.areanum) {
-			return false
-			// }
+			if !G.gi.AreasConnected(self.areanum, client.areanum) {
+				return false
+			}
 		}
 
 		self.ideal_yaw = vectoyaw(temp)
@@ -480,10 +499,27 @@ func (G *qGame) findTarget(self *edict_t) bool {
 
 	G.foundTarget(self)
 
-	//  if (!(self->monsterinfo.aiflags & AI_SOUND_TARGET) &&
-	// 	 (self->monsterinfo.sight)) {
-	// 	 self->monsterinfo.sight(self, self->enemy);
-	//  }
+	if (self.monsterinfo.aiflags&AI_SOUND_TARGET) == 0 &&
+		self.monsterinfo.sight != nil {
+		self.monsterinfo.sight(self, self.enemy, G)
+	}
+
+	return true
+}
+
+/* ============================================================================= */
+
+func FacingIdeal(self *edict_t) bool {
+
+	if self == nil {
+		return false
+	}
+
+	delta := shared.Anglemod(self.s.Angles[shared.YAW] - self.ideal_yaw)
+
+	if (delta > 45) && (delta < 315) {
+		return false
+	}
 
 	return true
 }
@@ -500,51 +536,48 @@ func mCheckAttack(self *edict_t, G *qGame) bool {
 	}
 
 	if self.enemy.Health > 0 {
-		// 	/* see if any entities are in the way of the shot */
-		// 	VectorCopy(self->s.origin, spot1);
-		// 	spot1[2] += self->viewheight;
-		// 	VectorCopy(self->enemy->s.origin, spot2);
-		// 	spot2[2] += self->enemy->viewheight;
+		/* see if any entities are in the way of the shot */
+		spot1 := make([]float32, 3)
+		copy(spot1, self.s.Origin[:])
+		spot1[2] += float32(self.viewheight)
+		spot2 := make([]float32, 3)
+		copy(spot2, self.s.Origin[:])
+		spot2[2] += float32(self.enemy.viewheight)
 
-		// 	tr = gi.trace(spot1, NULL, NULL, spot2, self,
-		// 			CONTENTS_SOLID | CONTENTS_MONSTER | CONTENTS_SLIME |
-		// 			CONTENTS_LAVA | CONTENTS_WINDOW);
+		tr := G.gi.Trace(spot1, nil, nil, spot2, self,
+			shared.CONTENTS_SOLID|shared.CONTENTS_MONSTER|shared.CONTENTS_SLIME|
+				shared.CONTENTS_LAVA|shared.CONTENTS_WINDOW)
 
-		// 	/* do we have a clear shot? */
-		// 	if (tr.ent != self->enemy)
-		// 	{
-		// 		return false;
-		// 	}
+		/* do we have a clear shot? */
+		if tr.Ent != self.enemy {
+			return false
+		}
 	}
 
 	/* melee attack */
 	if G.enemy_range == RANGE_MELEE {
-		// 	/* don't always melee in easy mode */
-		// 	if ((skill->value == SKILL_EASY) && (randk() & 3))
-		// 	{
-		// 		return false;
-		// 	}
+		/* don't always melee in easy mode */
+		if (G.skill.Int() == SKILL_EASY) && (shared.Randk()&3) != 0 {
+			return false
+		}
 
-		// 	if (self->monsterinfo.melee)
-		// 	{
-		// 		self->monsterinfo.attack_state = AS_MELEE;
-		// 	}
-		// 	else
-		// 	{
-		// 		self->monsterinfo.attack_state = AS_MISSILE;
-		// 	}
+		if self.monsterinfo.melee != nil {
+			self.monsterinfo.attack_state = AS_MELEE
+		} else {
+			self.monsterinfo.attack_state = AS_MISSILE
+		}
 
 		return true
 	}
 
 	/* missile attack */
-	// if (!self.monsterinfo.attack) {
-	// 	return false;
-	// }
+	if self.monsterinfo.attack == nil {
+		return false
+	}
 
-	// if (level.time < self->monsterinfo.attack_finished) {
-	// 	return false;
-	// }
+	if G.level.time < self.monsterinfo.attack_finished {
+		return false
+	}
 
 	if G.enemy_range == RANGE_FAR {
 		return false
@@ -561,14 +594,11 @@ func mCheckAttack(self *edict_t, G *qGame) bool {
 		return false
 	}
 
-	// if (skill->value == SKILL_EASY)
-	// {
-	// 	chance *= 0.5;
-	// }
-	// else if (skill->value >= SKILL_HARD)
-	// {
-	// 	chance *= 2;
-	// }
+	if G.skill.Int() == SKILL_EASY {
+		chance *= 0.5
+	} else if G.skill.Int() >= SKILL_HARD {
+		chance *= 2
+	}
 
 	if shared.Frandk() < chance {
 		self.monsterinfo.attack_state = AS_MISSILE
@@ -585,6 +615,46 @@ func mCheckAttack(self *edict_t, G *qGame) bool {
 	}
 
 	return false
+}
+
+/*
+ * Turn and close until within an
+ * angle to launch a melee attack
+ */
+func (G *qGame) ai_run_melee(self *edict_t) {
+	if self == nil {
+		return
+	}
+
+	self.ideal_yaw = G.enemy_yaw
+	M_ChangeYaw(self)
+
+	if FacingIdeal(self) {
+		if self.monsterinfo.melee != nil {
+			self.monsterinfo.melee(self, G)
+			self.monsterinfo.attack_state = AS_STRAIGHT
+		}
+	}
+}
+
+/*
+ * Turn in place until within an
+ * angle to launch a missile attack
+ */
+func (G *qGame) ai_run_missile(self *edict_t) {
+	if self == nil {
+		return
+	}
+
+	self.ideal_yaw = G.enemy_yaw
+	M_ChangeYaw(self)
+
+	if FacingIdeal(self) {
+		if self.monsterinfo.attack != nil {
+			self.monsterinfo.attack(self, G)
+			self.monsterinfo.attack_state = AS_STRAIGHT
+		}
+	}
 }
 
 /*
@@ -695,7 +765,7 @@ func (G *qGame) ai_checkattack(self *edict_t) bool {
 	G.enemy_vis = G.visible(self, self.enemy)
 
 	if G.enemy_vis {
-		// self.monsterinfo.search_time = level.time + 5
+		self.monsterinfo.search_time = G.level.time + 5
 		copy(self.monsterinfo.last_sighting[:], self.enemy.s.Origin[:])
 	}
 
@@ -716,15 +786,15 @@ func (G *qGame) ai_checkattack(self *edict_t) bool {
 		G.enemy_yaw = vectoyaw(temp)
 	}
 
-	//  if (self.monsterinfo.attack_state == AS_MISSILE) {
-	// 	 ai_run_missile(self);
-	// 	 return true;
-	//  }
+	if self.monsterinfo.attack_state == AS_MISSILE {
+		G.ai_run_missile(self)
+		return true
+	}
 
-	// if self.monsterinfo.attack_state == AS_MELEE {
-	// 	 ai_run_melee(self);
-	// return true
-	// }
+	if self.monsterinfo.attack_state == AS_MELEE {
+		G.ai_run_melee(self)
+		return true
+	}
 
 	/* if enemy is not currently visible,
 	we will never attack */
@@ -799,16 +869,16 @@ func ai_run(self *edict_t, dist float32, G *qGame) {
 		G.mMoveToGoal(self, dist)
 		self.monsterinfo.aiflags &^= AI_LOST_SIGHT
 		copy(self.monsterinfo.last_sighting[:], self.enemy.s.Origin[:])
-		// self.monsterinfo.trail_time = level.time
+		self.monsterinfo.trail_time = G.level.time
 		return
 	}
 
-	//  if ((self.monsterinfo.search_time) &&
-	// 	 (level.time > (self->monsterinfo.search_time + 20))) {
-	// 	 M_MoveToGoal(self, dist);
-	// 	 self->monsterinfo.search_time = 0;
-	// 	 return;
-	//  }
+	if (self.monsterinfo.search_time != 0) &&
+		(G.level.time > (self.monsterinfo.search_time + 20)) {
+		G.mMoveToGoal(self, dist)
+		self.monsterinfo.search_time = 0
+		return
+	}
 
 	save := self.goalentity
 	tempgoal, _ := G.gSpawn()
@@ -827,27 +897,27 @@ func ai_run(self *edict_t, dist float32, G *qGame) {
 		self.monsterinfo.aiflags &^= AI_PURSUE_NEXT
 
 		/* give ourself more time since we got this far */
-		// self.monsterinfo.search_time = G.level.time + 5
+		self.monsterinfo.search_time = G.level.time + 5
 
+		var marker *edict_t = nil
 		if (self.monsterinfo.aiflags & AI_PURSUE_TEMP) != 0 {
-			// 		 self->monsterinfo.aiflags &= ~AI_PURSUE_TEMP;
+			self.monsterinfo.aiflags &^= AI_PURSUE_TEMP
 			// 		 marker = NULL;
-			// 		 VectorCopy(self->monsterinfo.saved_goal,
-			// 				 self->monsterinfo.last_sighting);
-			// 		 new = true;
-			// 	 } else if (self->monsterinfo.aiflags & AI_PURSUIT_LAST_SEEN) != 0 {
-			// 		 self->monsterinfo.aiflags &= ~AI_PURSUIT_LAST_SEEN;
+			// copy(self.monsterinfo.last_sighting[:], self.owner.monsterinfo.saved_goal[:])
+			isNew = true
+		} else if (self.monsterinfo.aiflags & AI_PURSUIT_LAST_SEEN) != 0 {
+			self.monsterinfo.aiflags &^= AI_PURSUIT_LAST_SEEN
 			// 		 marker = PlayerTrail_PickFirst(self);
-			// 	 } else {
+		} else {
 			// 		 marker = PlayerTrail_PickNext(self);
 		}
 
-		// 	 if (marker) {
-		// 		 VectorCopy(marker->s.origin, self->monsterinfo.last_sighting);
-		// 		 self->monsterinfo.trail_time = marker->timestamp;
-		// 		 self->s.angles[YAW] = self->ideal_yaw = marker->s.angles[YAW];
-		// 		 new = true;
-		// 	 }
+		if marker != nil {
+			// 		 VectorCopy(marker->s.origin, self->monsterinfo.last_sighting);
+			// 		 self->monsterinfo.trail_time = marker->timestamp;
+			// 		 self->s.angles[YAW] = self->ideal_yaw = marker->s.angles[YAW];
+			isNew = true
+		}
 	}
 
 	v := make([]float32, 3)

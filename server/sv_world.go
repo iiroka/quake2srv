@@ -182,7 +182,7 @@ func (T *qServer) svLinkEdict(ent shared.Edict_s) {
 		ent.S().Solid = 0
 	}
 
-	// /* set the abs box */
+	/* set the abs box */
 	if (ent.Solid() == shared.SOLID_BSP) &&
 		(ent.S().Angles[0] != 0 || ent.S().Angles[1] != 0 ||
 			ent.S().Angles[2] != 0) {
@@ -542,7 +542,6 @@ func SV_TraceBounds(start, mins, maxs, end, boxmins, boxmaxs []float32) {
  * Passedict and edicts owned by passedict are explicitly not checked.
  */
 func (T *qServer) svTrace(start, mins, maxs, end []float32, passedict shared.Edict_s, contentmask int) shared.Trace_t {
-	//  moveclip_t clip;
 
 	if mins == nil {
 		mins = []float32{0, 0, 0}
